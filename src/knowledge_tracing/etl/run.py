@@ -1,40 +1,33 @@
-"""Standalone ETL entrypoint: Extract -> Transform -> Load."""
+"""ETL stage: Extract -> Transform -> Load."""
 
 from __future__ import annotations
 
-import argparse
 import logging
 from pathlib import Path
 
-from ..config import DEFAULT_CONFIG_PATH, PathLike, load_config
-from ..logging_setup import configure_logging
-from .extract import DataSource, extract
+from ..config import Config
+from .extract import DataSource, extract, write_sample
 from .load import load
 from .transform import ProcessedData, transform
 
-# Explicit name: this module also runs as __main__ (python -m ...).
-LOG = logging.getLogger("knowledge_tracing.etl.run")
+LOG = logging.getLogger(__name__)
 
 
 def run_etl(
-    config_path: PathLike, data_source: DataSource
+    cfg: Config, data_source: DataSource, *, sample_students: int | None = None
 ) -> tuple[ProcessedData, dict[str, Path]]:
-    cfg = load_config(config_path)
+    """Run the ETL stage and return the processed data with the written files.
+
+    Args:
+        cfg: Validated configuration.
+        data_source: ``"sample"`` or ``"full"``.
+        sample_students: If set, also refresh the committed sample CSV with the
+            first ``sample_students`` students of the extracted data.
+    """
     df_raw = extract(cfg.data, data_source=data_source)
+    if sample_students is not None:
+        write_sample(df_raw, cfg.data.sample_path, n_students=sample_students)
     processed = transform(df_raw, cfg.data, seed=cfg.seed)
     paths = load(processed, cfg.data.processed_dir)
+    LOG.info("ETL artifacts: %s", {name: str(path) for name, path in paths.items()})
     return processed, paths
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Run the ETL stage only.")
-    ap.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
-    ap.add_argument("--data-source", choices=["sample", "full"], default="sample")
-    args = ap.parse_args()
-    configure_logging()
-    _, paths = run_etl(args.config, args.data_source)
-    LOG.info("ETL artifacts: %s", {k: str(v) for k, v in paths.items()})
-
-
-if __name__ == "__main__":
-    main()

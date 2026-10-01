@@ -13,6 +13,10 @@ from typing import Any
 
 import pandas as pd
 
+from ..errors import DataQualityError
+
+__all__ = ["DataQualityError", "enforce_quality_gate", "failed_checks", "quality_report"]
+
 LOG = logging.getLogger(__name__)
 
 REQUIRED_COLUMNS = ["user_id", "order_idx", "skill_idx", "correct", "split"]
@@ -38,10 +42,6 @@ def quality_report(long: pd.DataFrame) -> dict:
 
     passed = all(c["passed"] for c in checks.values())
     return {"passed": passed, "checks": checks}
-
-
-class DataQualityError(RuntimeError):
-    """The data-quality gate failed; training must not proceed."""
 
 
 def failed_checks(report: dict[str, Any]) -> list[str]:

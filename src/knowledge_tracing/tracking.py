@@ -20,6 +20,9 @@ def tracking_uri(cfg: MLflowConfig) -> str:
     """
     uri = os.environ.get(TRACKING_URI_ENV) or cfg.tracking_uri
     if uri.startswith(_FILE_SCHEME):
+        # MLflow 3 refuses the file store unless explicitly allowed; using it
+        # is a deliberate choice of the configuration.
+        os.environ.setdefault("MLFLOW_ALLOW_FILE_STORE", "true")
         return _FILE_SCHEME + str(resolve_path(uri.removeprefix(_FILE_SCHEME)))
     return uri
 

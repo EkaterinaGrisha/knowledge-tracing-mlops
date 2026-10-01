@@ -86,7 +86,7 @@ def extract(data_cfg: DataConfig, data_source: DataSource = "sample") -> pd.Data
         if not sample_path.exists():
             raise FileNotFoundError(
                 f"Sample dataset not found at {sample_path}. "
-                "Run the full pipeline once with --data-source full to regenerate it."
+                "Regenerate it with: kt etl --data-source full --write-sample 300"
             )
         LOG.info("Loading committed sample dataset: %s", sample_path)
         df = pd.read_csv(sample_path)

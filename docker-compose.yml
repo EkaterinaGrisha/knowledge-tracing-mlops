@@ -5,7 +5,7 @@ services:
   pipeline:
     build: .
     image: kt-pipeline:latest
-    command: ["--data-source", "sample"]
+    command: ["train", "--data-source", "sample"]
     volumes:
       - ./reports:/app/reports
       - ./mlruns:/app/mlruns

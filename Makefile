@@ -1,32 +1,13 @@
-.PHONY: install etl all all-full test lint format typecheck present mlflow docker docker-run clean
+.PHONY: install lint format typecheck test etl train train-quick train-full present mlflow docker docker-run clean
 
 # Every command runs inside the project virtualenv (.venv/) managed by Poetry.
 RUN ?= poetry run
-
-# OpenMP guards prevent duplicate-libomp segfaults seen on macOS arm64
-# when PyTorch and lightgbm/xgboost share one process. MLflow 3.x refuses the
-# ./mlruns file store unless explicitly allowed (same flag as in the Dockerfile).
-OMP_GUARDS = KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 MLFLOW_ALLOW_FILE_STORE=true
 
 # Create .venv/ inside the project, install the locked dependencies + dev tools
 # and the git hooks (pre-commit, pre-push).
 install:
 	poetry install
 	$(RUN) pre-commit install
-
-# Run the full pipeline on the committed sample (fast, offline, used by CI).
-all:
-	$(OMP_GUARDS) $(RUN) python -m knowledge_tracing.pipeline --config config/config.yaml --data-source sample
-
-# Run the full pipeline on the full ASSISTments dataset (downloads on first run).
-all-full:
-	$(OMP_GUARDS) $(RUN) python -m knowledge_tracing.pipeline --config config/config.yaml --data-source full
-
-etl:
-	$(RUN) python -m knowledge_tracing.etl.run --config config/config.yaml --data-source sample
-
-test:
-	$(OMP_GUARDS) $(RUN) pytest -q
 
 # All static checks from .pre-commit-config.yaml (ruff, mypy, file hygiene, ...).
 # no-commit-to-branch is skipped so the target also works on main.
@@ -39,6 +20,24 @@ format:
 
 typecheck:
 	$(RUN) mypy
+
+test:
+	$(RUN) pytest -q
+
+etl:
+	$(RUN) kt etl --data-source sample
+
+# Full pipeline on the committed sample (offline).
+train:
+	$(RUN) kt train --data-source sample
+
+# Same with minimal budgets (config/quick.yaml) — a smoke run in about a minute.
+train-quick:
+	$(RUN) kt train --data-source sample --quick
+
+# Full ASSISTments dataset (downloaded on first run; 20–45 min on a laptop CPU).
+train-full:
+	$(RUN) kt train --data-source full
 
 present:
 	poetry install --with presentation

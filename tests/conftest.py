@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -6,11 +7,25 @@ import pandas as pd
 import pytest
 
 from knowledge_tracing.config import PROJECT_ROOT_ENV, Config, DataConfig, load_config
+from knowledge_tracing.runtime import configure_runtime
+
+# Same platform settings as the `kt` command, before torch/lightgbm are imported.
+configure_runtime()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Relative paths in config/config.yaml refer to the repository root,
 # whatever directory pytest is started from.
 os.environ.setdefault(PROJECT_ROOT_ENV, str(REPO_ROOT))
+
+
+@pytest.fixture
+def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Isolated project root: config and committed sample copied, outputs stay in tmp."""
+    shutil.copytree(REPO_ROOT / "config", tmp_path / "config")
+    shutil.copytree(REPO_ROOT / "data" / "sample", tmp_path / "data" / "sample")
+    monkeypatch.setenv(PROJECT_ROOT_ENV, str(tmp_path))
+    monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
+    return tmp_path
 
 
 @pytest.fixture(scope="session")

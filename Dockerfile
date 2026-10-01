@@ -58,7 +58,9 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --chown=mluser:mluser . .
 USER mluser
 
-# Default: run the pipeline on the committed sample (fully offline, reproducible).
-# Override CMD to run on the full dataset:  docker run kt-pipeline ... --data-source full
-ENTRYPOINT ["python", "-m", "knowledge_tracing.pipeline"]
-CMD ["--data-source", "sample"]
+# The image runs the `kt` command; by default the pipeline on the committed
+# sample (fully offline, reproducible). Other commands:
+#   docker run kt-pipeline train --data-source full
+#   docker run kt-pipeline etl --data-source sample
+ENTRYPOINT ["kt"]
+CMD ["train", "--data-source", "sample"]

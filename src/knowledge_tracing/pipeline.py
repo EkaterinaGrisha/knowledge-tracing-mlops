@@ -4,15 +4,14 @@ Stages: ETL (extract/transform/load) -> data-quality gate -> train and evaluate
 every model (BKT, DKT, DKT+Optuna, FLAML AutoML) -> drift monitoring ->
 MLflow logging -> figures -> metrics.json.
 
-Run:
-    python -m knowledge_tracing.pipeline --data-source sample        # fast, offline (CI)
-    python -m knowledge_tracing.pipeline --data-source full          # full ASSISTments
-    python -m knowledge_tracing.pipeline --data-source sample --quick # minimal budgets (CI smoke)
+Run from the command line:
+    kt train --data-source sample          # fast, offline (CI)
+    kt train --data-source full            # full ASSISTments
+    kt train --data-source sample --quick  # minimal budgets (CI smoke)
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import math
@@ -22,22 +21,13 @@ from typing import Any
 
 import mlflow
 
-from .config import (
-    DEFAULT_CONFIG_PATH,
-    Config,
-    MonitoringConfig,
-    PathLike,
-    load_config,
-    quick_overlay_path,
-    resolve_path,
-)
+from .config import Config, MonitoringConfig, resolve_path
 from .etl.datasets import TrainingData, build_training_data
-from .etl.extract import DataSource, extract
-from .etl.load import load
-from .etl.transform import ProcessedData, transform
+from .etl.extract import DataSource
+from .etl.run import run_etl
+from .etl.transform import ProcessedData
 from .evaluation import visualize as viz
 from .evaluation.metrics import compute_metrics
-from .logging_setup import configure_logging
 from .models.base import KnowledgeTracingModel, Predictions
 from .models.registry import build_models
 from .monitoring.data_quality import enforce_quality_gate, quality_report
@@ -45,8 +35,7 @@ from .monitoring.drift import drift_report
 from .monitoring.resources import ResourceMonitor
 from .tracking import configure_tracking
 
-# Explicit name: this module also runs as __main__ (python -m ...).
-LOG = logging.getLogger("knowledge_tracing.pipeline")
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(eq=False)
@@ -59,11 +48,9 @@ class ModelRun:
     resources: dict[str, float]
 
 
-def run_etl(cfg: Config, data_source: DataSource) -> ProcessedData:
+def etl_stage(cfg: Config, data_source: DataSource) -> ProcessedData:
     """Extract -> transform -> load; dataset statistics go to MLflow."""
-    df_raw = extract(cfg.data, data_source=data_source)
-    processed = transform(df_raw, cfg.data, seed=cfg.seed)
-    load(processed, cfg.data.processed_dir)
+    processed, _ = run_etl(cfg, data_source)
     mlflow.log_params(
         {key: processed.stats[key] for key in ("n_students", "n_skills", "n_interactions")}
     )
@@ -210,7 +197,7 @@ def run_pipeline(cfg: Config, data_source: DataSource, *, quick: bool = False) -
     with mlflow.start_run(run_name=f"kt-{data_source}{'-quick' if quick else ''}"):
         mlflow.log_params({"data_source": data_source, "quick": quick, "seed": cfg.seed})
 
-        processed = run_etl(cfg, data_source)
+        processed = etl_stage(cfg, data_source)
         dq = check_data_quality(processed, cfg.monitoring)
         data = build_training_data(processed)
         runs = train_and_evaluate(build_models(cfg.models, cfg.seed), data)
@@ -238,12 +225,6 @@ def run_pipeline(cfg: Config, data_source: DataSource, *, quick: bool = False) -
     return summary
 
 
-def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> dict[str, Any]:
-    """Load the configuration (plus the quick overlay if requested) and run the pipeline."""
-    overlays = [quick_overlay_path(config_path)] if quick else []
-    return run_pipeline(load_config(config_path, overlays), data_source, quick=quick)
-
-
 def _print_summary(summary: dict[str, Any]) -> None:
     LOG.info("=" * 64)
     LOG.info("RESULTS (test, one-step-ahead correctness prediction)")
@@ -258,17 +239,3 @@ def _print_summary(summary: dict[str, Any]) -> None:
         summary.get("automl_best_estimator"),
     )
     LOG.info("=" * 64)
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser(description="Run the end-to-end KT ML pipeline.")
-    ap.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
-    ap.add_argument("--data-source", choices=["sample", "full"], default="sample")
-    ap.add_argument("--quick", action="store_true", help="minimal budgets for CI smoke runs")
-    args = ap.parse_args()
-    configure_logging()
-    run(args.config, args.data_source, quick=args.quick)
-
-
-if __name__ == "__main__":
-    main()
