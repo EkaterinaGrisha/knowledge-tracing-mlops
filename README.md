@@ -4,7 +4,13 @@
 
 **Дата:** май 2026
 
-**Репозиторий:** <https://github.com/EkaterinaGrisha/knowledge-tracing>
+**Репозиторий:** <https://github.com/EkaterinaGrisha/knowledge-tracing-mlops>
+
+> **Примечание.** Этот репозиторий — копия проекта
+> [knowledge-tracing](https://github.com/EkaterinaGrisha/knowledge-tracing),
+> созданная для домашнего задания по подготовке ML-проекта к production.
+> Исходный репозиторий не изменяется; история коммитов перенесена полностью,
+> исходное состояние отмечено тегом `v1.0.0-baseline`.
 
 ---
 
