@@ -1,8 +1,9 @@
 name: CI
 
-# Continuous Integration: lint + tests on every push/PR, then build the Docker
-# image and run a smoke pipeline inside it. Runs entirely on the committed
-# sample dataset, so no secrets or network dataset download are required.
+# Continuous Integration: static checks + tests on every push/PR, then build
+# the Docker image and run a smoke pipeline inside it. Runs entirely on the
+# committed sample dataset, so no secrets or network dataset download are
+# required.
 
 on:
   push:
@@ -17,11 +18,11 @@ jobs:
   lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
         id: setup-python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version-file: ".python-version"
 
@@ -31,10 +32,16 @@ jobs:
       # The project virtualenv lives in .venv/ (poetry.toml); it is restored
       # from cache until poetry.lock changes.
       - name: Cache virtualenv
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .venv
           key: venv-${{ runner.os }}-py${{ steps.setup-python.outputs.python-version }}-${{ hashFiles('poetry.lock') }}
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v6
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
 
       - name: Check that poetry.lock matches pyproject.toml
         run: poetry check --lock
@@ -44,8 +51,13 @@ jobs:
           poetry env use "${{ steps.setup-python.outputs.python-path }}"
           poetry install --no-interaction
 
-      - name: Lint (ruff)
-        run: poetry run ruff check src tests
+      # Same checks as the local git hooks: file hygiene, ruff, nbstripout,
+      # mypy and `poetry check --lock`. no-commit-to-branch only makes sense
+      # for local commits, so it is skipped here.
+      - name: Static checks (pre-commit)
+        env:
+          SKIP: no-commit-to-branch
+        run: poetry run pre-commit run --all-files --show-diff-on-failure
 
       - name: Run tests (pytest)
         run: poetry run pytest -q
@@ -54,7 +66,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint-and-test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build Docker image
         run: docker build -t kt-pipeline:ci .
