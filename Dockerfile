@@ -17,10 +17,16 @@ ENV PIP_NO_CACHE_DIR=1 \
 RUN pip install "poetry==${POETRY_VERSION}"
 
 WORKDIR /app
-COPY pyproject.toml poetry.lock poetry.toml ./
+COPY pyproject.toml poetry.lock poetry.toml README.md ./
 # Runtime dependencies only (no dev tools). On Linux the lock file resolves
 # torch to the CPU-only build, so there is no CUDA payload.
 RUN poetry install --only main --no-root && rm -rf "${POETRY_CACHE_DIR}"
+
+# The knowledge_tracing package itself, in a separate layer so code edits do
+# not reinstall dependencies. It is an editable install pointing at /app/src,
+# which the runtime stage provides at the same path.
+COPY src ./src
+RUN poetry install --only-root
 
 
 FROM python:3.11-slim AS runtime
@@ -54,5 +60,5 @@ USER mluser
 
 # Default: run the pipeline on the committed sample (fully offline, reproducible).
 # Override CMD to run on the full dataset:  docker run kt-pipeline ... --data-source full
-ENTRYPOINT ["python", "-m", "src.pipeline"]
+ENTRYPOINT ["python", "-m", "knowledge_tracing.pipeline"]
 CMD ["--data-source", "sample"]

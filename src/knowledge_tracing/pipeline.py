@@ -5,9 +5,9 @@ Stages: ETL (extract/transform/load) -> data-quality gate -> train 4 models
 visualisations -> MLflow logging -> metrics.json.
 
 Run:
-    python -m src.pipeline --data-source sample        # fast, offline (CI)
-    python -m src.pipeline --data-source full          # full ASSISTments
-    python -m src.pipeline --data-source sample --quick # minimal budgets (CI smoke)
+    python -m knowledge_tracing.pipeline --data-source sample        # fast, offline (CI)
+    python -m knowledge_tracing.pipeline --data-source full          # full ASSISTments
+    python -m knowledge_tracing.pipeline --data-source sample --quick # minimal budgets (CI smoke)
 """
 
 from __future__ import annotations

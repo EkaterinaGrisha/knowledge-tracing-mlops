@@ -93,7 +93,7 @@ print('project root:', root)
 os.environ.setdefault('KMP_DUPLICATE_LIB_OK', 'TRUE')
 os.environ.setdefault('OMP_NUM_THREADS', '1')
 
-from src.utils import load_config
+from knowledge_tracing.utils import load_config
 
 cfg = load_config('config/config.yaml')
 SEED = cfg['seed']
@@ -131,9 +131,9 @@ md("""## 1. ETL: извлечение, преобразование, загру�
 студентов, на которых невозможно построить осмысленную причинную историю.
 """)
 
-code("""from src.etl.extract import extract
-from src.etl.transform import transform, build_sequences
-from src.etl.load import load
+code("""from knowledge_tracing.etl.extract import extract
+from knowledge_tracing.etl.transform import transform, build_sequences
+from knowledge_tracing.etl.load import load
 
 df_raw = extract(cfg, data_source=DATA_SOURCE)
 processed = transform(df_raw, cfg)
@@ -179,8 +179,8 @@ md("""## 2. Контроль качества данных и мониторин
 тихую деградацию модели.
 """)
 
-code("""from src.monitoring.data_quality import quality_report
-from src.monitoring.drift import drift_report
+code("""from knowledge_tracing.monitoring.data_quality import quality_report
+from knowledge_tracing.monitoring.drift import drift_report
 
 dq = quality_report(processed.long)
 print('Data quality passed =', dq['passed'])
@@ -276,8 +276,8 @@ forward-backward (число итераций EM — `em_iters = 30`).
 её ценность сомнительна.
 """)
 
-code("""from src.models import bkt as bkt_mod
-from src.evaluation.metrics import compute_metrics
+code("""from knowledge_tracing.models import bkt as bkt_mod
+from knowledge_tracing.evaluation.metrics import compute_metrics
 
 bkt_params = bkt_mod.fit_bkt_per_skill(train_seq, n_skills, cfg['models']['bkt']['em_iters'])
 _, _, _, yt, yp = bkt_mod.evaluate_bkt(bkt_params, test_seq, n_skills)
@@ -314,7 +314,7 @@ LSTM моделирует динамику знаний, линейная гол
 время благодаря умеренной размерности модели.
 """)
 
-code("""from src.models import dkt as dkt_mod
+code("""from knowledge_tracing.models import dkt as dkt_mod
 
 device = dkt_mod.pick_device()
 train_tr = dkt_mod.traces_from_sequences(train_seq)
@@ -363,7 +363,7 @@ Optuna (TPE-сэмплер). Пространство поиска: `embed_dim �
 закомментировать и в `results['DKT+Optuna']` записать результат DKT.
 """)
 
-code("""from src.models.dkt_optuna import search_dkt
+code("""from knowledge_tracing.models.dkt_optuna import search_dkt
 
 o = cfg['models']['dkt_optuna']
 search = search_dkt(
@@ -413,7 +413,7 @@ ExtraTrees) и его гиперпараметры, максимизируя AUC
 последовательностей.
 """)
 
-code("""from src.models.automl_flaml import train_automl, evaluate_automl
+code("""from knowledge_tracing.models.automl_flaml import train_automl, evaluate_automl
 
 Xtr, ytr = processed.split_xy('train')
 Xva, yva = processed.split_xy('val')
@@ -483,7 +483,7 @@ MLflow при запуске через `python -m src.pipeline` и встрое
 отчёт (`README.md`, §10).
 """)
 
-code("""from src.evaluation import visualize as viz
+code("""from knowledge_tracing.evaluation import visualize as viz
 from IPython.display import Image, display
 
 viz.plot_dataset_overview(processed.long, processed.stats, cfg)
@@ -560,7 +560,7 @@ mlflow ui --backend-store-uri file:./mlruns --port 5000
 """)
 
 code("""# Раскомментируйте для полного прогона (на full-датасете занимает 20–45 минут):
-# from src.pipeline import run
+# from knowledge_tracing.pipeline import run
 # summary = run('config/config.yaml', data_source='full')
 # summary['results']
 """)

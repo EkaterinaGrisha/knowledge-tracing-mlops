@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.models import dkt as dkt_mod
+from knowledge_tracing.models import dkt as dkt_mod
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def test_dkt_trains_and_predicts(tiny_sequences):
 
 @pytest.mark.slow
 def test_flaml_trains():
-    from src.models.automl_flaml import evaluate_automl, train_automl
+    from knowledge_tracing.models.automl_flaml import evaluate_automl, train_automl
 
     rng = np.random.default_rng(0)
     X = pd.DataFrame({"f1": rng.normal(size=300), "f2": rng.normal(size=300)})

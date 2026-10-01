@@ -16,14 +16,14 @@ install:
 
 # Run the full pipeline on the committed sample (fast, offline, used by CI).
 all:
-	$(OMP_GUARDS) $(RUN) python -m src.pipeline --config config/config.yaml --data-source sample
+	$(OMP_GUARDS) $(RUN) python -m knowledge_tracing.pipeline --config config/config.yaml --data-source sample
 
 # Run the full pipeline on the full ASSISTments dataset (downloads on first run).
 all-full:
-	$(OMP_GUARDS) $(RUN) python -m src.pipeline --config config/config.yaml --data-source full
+	$(OMP_GUARDS) $(RUN) python -m knowledge_tracing.pipeline --config config/config.yaml --data-source full
 
 etl:
-	$(RUN) python -m src.etl.run --config config/config.yaml --data-source sample
+	$(RUN) python -m knowledge_tracing.etl.run --config config/config.yaml --data-source sample
 
 test:
 	$(OMP_GUARDS) $(RUN) pytest -q
@@ -42,7 +42,7 @@ typecheck:
 
 present:
 	poetry install --with presentation
-	$(RUN) python -m src.presentation.build_deck
+	$(RUN) python scripts/build_deck.py
 
 mlflow:
 	MLFLOW_ALLOW_FILE_STORE=true $(RUN) mlflow ui --backend-store-uri file:./mlruns --port 5000

@@ -9,8 +9,8 @@ from typing import Any
 
 import yaml
 
-# Project root = parent of the `src` package.
-ROOT = Path(__file__).resolve().parent.parent
+# Project root: src/knowledge_tracing/utils.py -> repository root.
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def load_config(path: str | os.PathLike = "config/config.yaml") -> dict[str, Any]:

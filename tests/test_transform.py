@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.etl.transform import FEATURE_COLS, build_sequences, transform
+from knowledge_tracing.etl.transform import FEATURE_COLS, build_sequences, transform
 
 
 def test_transform_schema_and_splits(raw_long, mini_cfg):

@@ -1,6 +1,6 @@
 import numpy as np
 
-from src.models.bkt import (
+from knowledge_tracing.models.bkt import (
     DEFAULT_PARAMS,
     evaluate_bkt,
     fit_bkt_per_skill,

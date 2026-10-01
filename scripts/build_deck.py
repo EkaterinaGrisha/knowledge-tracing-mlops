@@ -6,7 +6,7 @@ architecture, automation, results, monitoring & reproducibility, conclusions.
 
 Reads reports/metrics.json + reports/figures/*.png. Run after the pipeline:
 
-    python -m src.presentation.build_deck
+    python scripts/build_deck.py
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 
-from ..utils import get_logger, resolve
+from knowledge_tracing.utils import get_logger, resolve
 
 LOG = get_logger()
 

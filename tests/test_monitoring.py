@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 
-from src.monitoring.data_quality import quality_report
-from src.monitoring.drift import drift_report
+from knowledge_tracing.monitoring.data_quality import quality_report
+from knowledge_tracing.monitoring.drift import drift_report
 
 
 def test_no_drift_for_identical_distributions(mini_cfg):

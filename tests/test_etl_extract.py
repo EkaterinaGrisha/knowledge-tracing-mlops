@@ -1,4 +1,4 @@
-from src.etl.extract import LONG_COLUMNS, parse_triplet_file
+from knowledge_tracing.etl.extract import LONG_COLUMNS, parse_triplet_file
 
 
 def test_parse_triplet_file(tmp_path):
