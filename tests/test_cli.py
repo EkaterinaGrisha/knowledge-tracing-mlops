@@ -40,7 +40,7 @@ def test_failed_quality_gate_stops_before_training(project_dir, monkeypatch):
     failing = {"passed": False, "checks": {"binary_labels": {"passed": False}}}
     monkeypatch.setattr("knowledge_tracing.pipeline.quality_report", lambda _: failing)
     assert main(["train", "--quick"]) == EXIT_DATA_QUALITY
-    assert not (project_dir / "reports" / "metrics.json").exists()
+    assert not (project_dir / "artifacts" / "metrics.json").exists()
 
 
 @pytest.mark.slow
@@ -62,9 +62,9 @@ def test_train_register_predict_promote(project_dir):
     )
     assert main(["train", "--quick", "--override", str(tiny)]) == 0
 
-    metrics = json.loads((project_dir / "reports" / "metrics.json").read_text(encoding="utf-8"))
+    metrics = json.loads((project_dir / "artifacts" / "metrics.json").read_text(encoding="utf-8"))
     assert set(metrics["results"]) == {"BKT", "DKT", "DKT+Optuna", "AutoML"}
-    assert len(list((project_dir / "reports" / "figures").glob("*.png"))) == 7
+    assert len(list((project_dir / "artifacts" / "figures").glob("*.png"))) == 7
     serving = metrics["serving"]
     assert serving["registered"] is True
     assert serving["alias"] == "challenger"

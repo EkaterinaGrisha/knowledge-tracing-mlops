@@ -1,6 +1,6 @@
 # Two services:
-#   pipeline — runs the ML pipeline, writing reports/, artifacts/ (the packaged
-#              model) and mlruns/ (MLflow SQLite store + artifacts) to the host
+#   pipeline — runs the ML pipeline, writing artifacts/ (metrics, figures, the
+#              packaged model) and mlruns/ (MLflow SQLite store) to the host
 #   mlflow   — serves the MLflow UI (runs and Model Registry) over mlruns/
 services:
   pipeline:
@@ -8,7 +8,6 @@ services:
     image: kt-pipeline:latest
     command: ["train", "--data-source", "sample"]
     volumes:
-      - ./reports:/app/reports
       - ./artifacts:/app/artifacts
       - ./mlruns:/app/mlruns
 

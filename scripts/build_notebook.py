@@ -66,7 +66,9 @@ md("""## 0. Подготовка окружения
 устанавливаем рабочую директорию в корень проекта (чтобы относительные пути
 из конфигурации разрешались правильно), фиксируем источник данных и seed.
 Этот блок единственный, который нужно выполнить **обязательно** — все
-последующие разделы используют объект `cfg`.
+последующие разделы используют объект `cfg`. Пакет `knowledge_tracing`
+установлен в `.venv` командой `poetry install`, поэтому импортируется без
+манипуляций с `sys.path`; ноутбук нужно открыть с kernel `.venv`.
 
 **Источник данных.** В переменной `DATA_SOURCE` выбирается режим работы:
 `'sample'` (закоммиченная подвыборка из 288 студентов, прогон занимает
@@ -77,7 +79,6 @@ ASSISTments 2009, скачивается автоматически на пер�
 """)
 
 code("""import os
-import sys
 from pathlib import Path
 
 # Перейти в корень проекта (там, где лежит config/config.yaml).
@@ -85,19 +86,19 @@ root = Path.cwd()
 while not (root / 'config' / 'config.yaml').exists() and root != root.parent:
     root = root.parent
 os.chdir(root)
-if str(root) not in sys.path:
-    sys.path.insert(0, str(root))
 print('project root:', root)
 
-# На macOS arm64 необходимо защититься от двойной загрузки OpenMP-рантайма.
-os.environ.setdefault('KMP_DUPLICATE_LIB_OK', 'TRUE')
-os.environ.setdefault('OMP_NUM_THREADS', '1')
+from knowledge_tracing.config import load_config
+from knowledge_tracing.logging_setup import configure_logging
+from knowledge_tracing.runtime import configure_runtime
 
-from knowledge_tracing.utils import load_config
+configure_runtime()   # macOS: защита от двойной загрузки OpenMP (до импорта torch)
+configure_logging()   # логи пакета выводятся в ячейки
 
-cfg = load_config('config/config.yaml')
-SEED = cfg['seed']
+cfg = load_config('config/config.yaml')   # типизированный и проверенный конфиг
+SEED = cfg.seed
 DATA_SOURCE = 'sample'   # 'sample' (быстро, офлайн) или 'full' (полный датасет)
+FIGURES_DIR = cfg.output.figures_dir
 
 print('source =', DATA_SOURCE, '· seed =', SEED)
 """)
@@ -111,16 +112,16 @@ md("""## 1. ETL: извлечение, преобразование, загру�
 **Что делаем.** Слой ETL подготавливает данные для всех последующих стадий
 обучения. Он состоит из трёх функций:
 
-- `extract(cfg, data_source)` — загружает исходные данные. В режиме `'full'`
+- `extract(cfg.data, data_source)` — загружает исходные данные. В режиме `'full'`
   скачивает train/test файлы ASSISTments с зеркала DKVMN (с ретраями и
   экспоненциальной задержкой при сетевых ошибках) и кэширует их в `data/raw/`;
   в режиме `'sample'` читает закоммиченный CSV.
-- `transform(df_raw, cfg)` — очищает данные, фильтрует студентов с короткой
+- `transform(df_raw, cfg.data, seed)` — очищает данные, фильтрует студентов с короткой
   историей, обрезает слишком длинные последовательности, кодирует
   идентификаторы навыков в плотный индекс, **выполняет сплит по студентам**
   (а не по строкам — это критично для отсутствия утечки), вычисляет восемь
   причинных признаков для табличной модели.
-- `load(processed, cfg)` — сохраняет результат в `data/processed/`
+- `load(processed, cfg.data.processed_dir)` — сохраняет результат в `data/processed/`
   (`features.parquet`, `interactions_long.parquet`, `dataset_stats.json`).
   Разнесение «подготовка → обучение» через файловую систему позволяет
   переиспользовать одну и ту же подготовку при многократных запусках обучения.
@@ -132,12 +133,12 @@ md("""## 1. ETL: извлечение, преобразование, загру�
 """)
 
 code("""from knowledge_tracing.etl.extract import extract
-from knowledge_tracing.etl.transform import transform, build_sequences
 from knowledge_tracing.etl.load import load
+from knowledge_tracing.etl.transform import transform
 
-df_raw = extract(cfg, data_source=DATA_SOURCE)
-processed = transform(df_raw, cfg)
-load(processed, cfg)
+df_raw = extract(cfg.data, data_source=DATA_SOURCE)
+processed = transform(df_raw, cfg.data, seed=SEED)
+load(processed, cfg.data.processed_dir)
 
 print('Исходных взаимодействий:', len(df_raw))
 print('После очистки и фильтрации:', processed.stats['n_interactions'])
@@ -164,11 +165,13 @@ md("""## 2. Контроль качества данных и мониторин
 
 **Что делаем.** Перед обучением выполняем два независимых проверочных шага:
 
-- **Data-quality gate** (`src/monitoring/data_quality.py`) — проверки схемы,
-  пропусков, диапазонов, бинарности меток и уникальности пары
-  `(user_id, order_idx)`. Если хотя бы одна проверка не прошла, пайплайн
-  логирует факт как предупреждение и сохраняет подробный отчёт как артефакт.
-- **Мониторинг дрейфа** (`src/monitoring/drift.py`) — расчёт PSI (Population
+- **Data-quality gate** (`knowledge_tracing/monitoring/data_quality.py`) —
+  проверки схемы, пропусков, диапазонов, бинарности меток и уникальности пары
+  `(user_id, order_idx)`. Если хотя бы одна проверка не прошла,
+  `enforce_quality_gate` останавливает работу (`DataQualityError`), а
+  пайплайн сохраняет подробный отчёт как артефакт MLflow; режим «только
+  предупредить» включается флагом `monitoring.fail_on_data_quality: false`.
+- **Мониторинг дрейфа** (`knowledge_tracing/monitoring/drift.py`) — расчёт PSI (Population
   Stability Index) и теста Колмогорова-Смирнова для каждого из восьми
   признаков, сравнение распределений train против test. Принятые пороги PSI:
   < 0.10 — стабильно, 0.10–0.25 — умеренный дрейф, ≥ 0.25 — значимый.
@@ -179,17 +182,23 @@ md("""## 2. Контроль качества данных и мониторин
 тихую деградацию модели.
 """)
 
-code("""from knowledge_tracing.monitoring.data_quality import quality_report
+code("""from knowledge_tracing.monitoring.data_quality import enforce_quality_gate, quality_report
 from knowledge_tracing.monitoring.drift import drift_report
 
 dq = quality_report(processed.long)
 print('Data quality passed =', dq['passed'])
 for name, info in dq['checks'].items():
     print(f'  {name}: passed = {info[\"passed\"]}')
+enforce_quality_gate(dq, fail=cfg.monitoring.fail_on_data_quality)
 
-ref = processed.features[processed.features['split'] == 'train']
-cur = processed.features[processed.features['split'] == 'test']
-drift = drift_report(ref, cur, processed.feature_cols, cfg)
+features = processed.features
+drift = drift_report(
+    features[features['split'] == 'train'],
+    features[features['split'] == 'test'],
+    processed.feature_cols,
+    psi_warn=cfg.monitoring.psi_warn,
+    psi_alert=cfg.monitoring.psi_alert,
+)
 print()
 print('Drift status:', drift['overall_status'])
 print(f'Признаков со значимым дрейфом: {drift[\"n_significant_drift\"]} из {drift[\"n_features\"]}')
@@ -247,19 +256,24 @@ md("""## 4. Обучение моделей
 по предыдущей истории студента предсказывает вероятность правильного ответа,
 после чего предсказания сопоставляются с фактическими метками.
 
-Ниже последовательно обучаются и оцениваются четыре модели; результаты
-накапливаются в словаре `results`.
+Все модели реализуют общий интерфейс `KnowledgeTracingModel`: `fit(data)`
+на обучающих данных и `predict(data.test)` — пары «фактический ответ /
+предсказанная вероятность». Метрики считаются одной функцией
+`compute_metrics`. Ниже модели обучаются и оцениваются по очереди;
+результаты накапливаются в словарях `results` и `preds`.
 """)
 
-code("""train_seq = build_sequences(processed.long, 'train')
-val_seq   = build_sequences(processed.long, 'val')
-test_seq  = build_sequences(processed.long, 'test')
-n_skills  = processed.n_skills
+code("""from knowledge_tracing.etl.datasets import build_training_data
+from knowledge_tracing.evaluation.metrics import compute_metrics
 
+data = build_training_data(processed)   # последовательности + табличные признаки по сплитам
 results = {}
 preds = {}
-print(f'Последовательностей: train={len(train_seq)}, val={len(val_seq)}, test={len(test_seq)}')
-print(f'Уникальных навыков: {n_skills}')
+print(
+    f'Последовательностей: train={len(data.train.sequences)}, '
+    f'val={len(data.val.sequences)}, test={len(data.test.sequences)}'
+)
+print(f'Уникальных навыков: {data.n_skills}')
 """)
 
 # 4.1 BKT
@@ -276,13 +290,12 @@ forward-backward (число итераций EM — `em_iters = 30`).
 её ценность сомнительна.
 """)
 
-code("""from knowledge_tracing.models import bkt as bkt_mod
-from knowledge_tracing.evaluation.metrics import compute_metrics
+code("""from knowledge_tracing.models.bkt import BKTModel
 
-bkt_params = bkt_mod.fit_bkt_per_skill(train_seq, n_skills, cfg['models']['bkt']['em_iters'])
-_, _, _, yt, yp = bkt_mod.evaluate_bkt(bkt_params, test_seq, n_skills)
-results['BKT'] = compute_metrics(yt, yp)
-preds['BKT']   = (yt, yp)
+bkt = BKTModel(cfg.models.bkt)
+bkt.fit(data)
+preds['BKT'] = bkt.predict(data.test)
+results['BKT'] = compute_metrics(*preds['BKT'])
 results['BKT']
 """)
 
@@ -309,34 +322,23 @@ LSTM моделирует динамику знаний, линейная гол
 текущее скрытое состояние. Это даёт DKT преимущество в точности предсказания
 на нетривиальных историях.
 
-При наличии GPU/MPS функция `pick_device()` автоматически выбирает
-соответствующее устройство; на CPU обучение всё ещё уложится в разумное
-время благодаря умеренной размерности модели.
+При наличии GPU (CUDA) функция `pick_device()` автоматически выбирает его;
+на CPU обучение всё ещё уложится в разумное время благодаря умеренной
+размерности модели.
 """)
 
-code("""from knowledge_tracing.models import dkt as dkt_mod
+code("""from knowledge_tracing.models.dkt import DKTModel
 
-device = dkt_mod.pick_device()
-train_tr = dkt_mod.traces_from_sequences(train_seq)
-val_tr   = dkt_mod.traces_from_sequences(val_seq)
-test_tr  = dkt_mod.traces_from_sequences(test_seq)
-d = cfg['models']['dkt']
-
-dkt_model, losses = dkt_mod.train_dkt(
-    train_tr, n_skills, device=device,
-    embed_dim=d['embed_dim'], hidden_dim=d['hidden_dim'],
-    dropout=d['dropout'], epochs=d['epochs'],
-    batch_size=d['batch_size'], lr=d['lr'], seed=SEED, verbose=False,
-)
-_, _, _, yt, yp = dkt_mod.evaluate_dkt(dkt_model, test_tr, device)
-results['DKT'] = compute_metrics(yt, yp)
-preds['DKT']   = (yt, yp)
+dkt = DKTModel(cfg.models.dkt, seed=SEED)
+dkt.fit(data)
+preds['DKT'] = dkt.predict(data.test)
+results['DKT'] = compute_metrics(*preds['DKT'])
 results['DKT']
 """)
 
 md("""**Что получили.** DKT уверенно превосходит BKT по AUC — типичный прирост
-+0.08–0.09 на полном датасете. Train-loss модели (`losses`) монотонно
-снижается по эпохам, что подтверждает корректное обучение (без расходимости
++0.08–0.09 на полном датасете. Train-loss модели монотонно
+снижается по эпохам (`dkt.training_curve()`), что подтверждает корректное обучение (без расходимости
 и без преждевременного плато). Кривая обучения визуализируется в разделе 6.
 """)
 
@@ -346,7 +348,7 @@ md("""### 4.3 DKT с автоматическим подбором архите�
 **Что делаем.** Автоматизируем архитектурный поиск поверх DKT с помощью
 Optuna (TPE-сэмплер). Пространство поиска: `embed_dim ∈ {32, 64, 128}`,
 `hidden_dim ∈ {32, 64, 128}`, `dropout ∈ [0.0, 0.5]`,
-`lr ∈ log-uniform [1e-4, 1e-2]`, `batch_size ∈ {16, 32, 64}`.
+`lr ∈ log-uniform [1e-3, 2e-2]`, `batch_size ∈ {16, 32, 64}`.
 Каждый trial обучает уменьшенную копию DKT (`epochs_per_trial = 8`) и
 возвращает AUC на val; Optuna максимизирует AUC. После `n_trials = 25`
 лучшая конфигурация переобучается полностью на `epochs = 30` и оценивается
@@ -361,28 +363,18 @@ Optuna (TPE-сэмплер). Пространство поиска: `embed_dim �
 Этот блок — самый длительный по времени в ноутбуке (на sample — несколько
 минут, на full — около 10–15 минут). При желании пропустить его, можно
 закомментировать и в `results['DKT+Optuna']` записать результат DKT.
+Для быстрого знакомства уменьшите бюджеты: `load_config('config/config.yaml',
+['config/quick.yaml'])`.
 """)
 
-code("""from knowledge_tracing.models.dkt_optuna import search_dkt
+code("""from knowledge_tracing.models.dkt_optuna import DKTOptunaModel
 
-o = cfg['models']['dkt_optuna']
-search = search_dkt(
-    train_tr, val_tr, n_skills,
-    n_trials=o['n_trials'], epochs_per_trial=o['epochs_per_trial'], seed=SEED,
-)
-best = search['best_params']
-print('Лучшая конфигурация:', best)
-print('Лучший val AUC:', round(search['best_val_auc'], 4))
-
-best_model, _ = dkt_mod.train_dkt(
-    train_tr, n_skills, device=device,
-    embed_dim=best['embed_dim'], hidden_dim=best['hidden_dim'],
-    dropout=best['dropout'], lr=best['lr'], batch_size=best['batch_size'],
-    epochs=d['epochs'], seed=SEED, verbose=False,
-)
-_, _, _, yt, yp = dkt_mod.evaluate_dkt(best_model, test_tr, device)
-results['DKT+Optuna'] = compute_metrics(yt, yp)
-preds['DKT+Optuna']   = (yt, yp)
+dkt_optuna = DKTOptunaModel(cfg.models.dkt_optuna, cfg.models.dkt, seed=SEED)
+dkt_optuna.fit(data)   # поиск архитектуры на val + переобучение лучшей конфигурации
+print('Лучшая конфигурация:', dkt_optuna.search_.best_params)
+print('Лучший val AUC:', round(dkt_optuna.search_.best_val_auc, 4))
+preds['DKT+Optuna'] = dkt_optuna.predict(data.test)
+results['DKT+Optuna'] = compute_metrics(*preds['DKT+Optuna'])
 results['DKT+Optuna']
 """)
 
@@ -404,7 +396,9 @@ FLAML — фреймворк AutoML от Microsoft Research. FLAML исполь�
 одновременно выбирает алгоритм-кандидат (LightGBM, XGBoost, RandomForest или
 ExtraTrees) и его гиперпараметры, максимизируя AUC на валидации.
 Параметры: `time_budget_s = 600` секунд, `metric = "roc_auc"`,
-`estimator_list = ["lgbm", "xgboost", "rf", "extra_tree"]`.
+`estimator_list = ["lgbm", "xgboost", "rf", "extra_tree"]`. FLAML всегда
+расходует весь бюджет времени, поэтому число испытаний (и выбранная
+конфигурация) зависит от скорости компьютера.
 
 **Зачем.** Это самый быстрый путь от «есть признаки» к «есть рабочая модель»:
 никакого ручного выбора алгоритма, никакого подбора гиперпараметров. Сравнение
@@ -413,22 +407,13 @@ ExtraTrees) и его гиперпараметры, максимизируя AUC
 последовательностей.
 """)
 
-code("""from knowledge_tracing.models.automl_flaml import train_automl, evaluate_automl
+code("""from knowledge_tracing.models.automl_flaml import AutoMLModel
 
-Xtr, ytr = processed.split_xy('train')
-Xva, yva = processed.split_xy('val')
-Xte, yte = processed.split_xy('test')
-
-a = cfg['models']['automl_flaml']
-automl = train_automl(
-    Xtr, ytr, Xva, yva,
-    time_budget_s=a['time_budget_s'], metric=a['metric'],
-    estimator_list=a['estimator_list'], seed=SEED,
-)
-_, _, _, yt, yp = evaluate_automl(automl, Xte, yte)
-results['AutoML'] = compute_metrics(yt, yp)
-preds['AutoML']   = (yt, yp)
-print('Лучший выбранный эстимейтор:', automl.best_estimator)
+automl = AutoMLModel(cfg.models.automl_flaml, seed=SEED)
+automl.fit(data)   # табличные признаки train, ранняя остановка по val
+preds['AutoML'] = automl.predict(data.test)
+results['AutoML'] = compute_metrics(*preds['AutoML'])
+print('Лучший выбранный эстимейтор:', automl.report()['automl_best_estimator'])
 results['AutoML']
 """)
 
@@ -478,37 +463,43 @@ md("""**Что получили.** На полном датасете поряд
 md("""## 6. Визуализации
 
 **Что делаем.** Строим семь графиков в едином стиле и сохраняем их в
-`reports/figures/`. Эти же файлы автоматически логируются как артефакты в
-MLflow при запуске через `python -m src.pipeline` и встроены в основной
-отчёт (`README.md`, §10).
+`artifacts/figures/` (каталог `output.figures_dir` из конфигурации). Эти же
+графики автоматически логируются как артефакты в MLflow при запуске
+`kt train`; опубликованные в отчёте (`README.md`, §10) версии лежат в
+`reports/figures/` и обновляются осознанно командой `make publish-report`.
 """)
 
-code("""from knowledge_tracing.evaluation import visualize as viz
-from IPython.display import Image, display
+code("""from IPython.display import Image, display
 
-viz.plot_dataset_overview(processed.long, processed.stats, cfg)
-viz.plot_model_comparison(results, cfg)
-viz.plot_roc(preds, cfg)
-viz.plot_dkt_loss(losses, cfg)
+from knowledge_tracing.evaluation import visualize as viz
+
 best_name = max(results, key=lambda k: results[k]['auc'])
-viz.plot_confusion(*preds[best_name], best_name, cfg)
-viz.plot_calibration(*preds[best_name], best_name, cfg)
-
-for name in ['dataset_overview', 'model_comparison', 'roc_comparison',
-             'dkt_loss', 'confusion_matrix', 'calibration']:
-    display(Image(f'reports/figures/{name}.png'))
+figures = [
+    viz.plot_dataset_overview(processed.long, processed.stats, FIGURES_DIR),
+    viz.plot_model_comparison(results, FIGURES_DIR),
+    viz.plot_roc(preds, FIGURES_DIR),
+    viz.plot_dkt_loss(dkt.training_curve(), FIGURES_DIR),
+    viz.plot_confusion(*preds[best_name], best_name, FIGURES_DIR),
+    viz.plot_calibration(*preds[best_name], best_name, FIGURES_DIR),
+]
+importance = automl.feature_importance()
+if importance is not None:
+    figures.append(
+        viz.plot_feature_importance(list(importance.index), importance.to_numpy(), FIGURES_DIR)
+    )
+for path in figures:
+    display(Image(str(path)))
 """)
 
-md("""**Что получили.** Шесть графиков (`feature_importance.png` строится
-отдельно как часть полного прогона `src.pipeline`, поскольку требует
-доступа к внутренностям FLAML-эстимейтора):
+md("""**Что получили.** Семь графиков:
 
 - `dataset_overview.png` — четырёхпанельный обзор датасета;
 - `model_comparison.png` — bar-chart четырёх моделей по AUC/ACC/F1/RMSE;
 - `roc_comparison.png` — ROC-кривые всех моделей на одной системе координат;
 - `dkt_loss.png` — кривая обучения DKT;
 - `confusion_matrix.png` — матрица ошибок лучшей модели;
-- `calibration.png` — калибровочная кривая лучшей модели.
+- `calibration.png` — калибровочная кривая лучшей модели;
+- `feature_importance.png` — важность признаков модели AutoML.
 
 Подробное толкование графиков приведено в `README.md`, §10.
 """)
@@ -523,7 +514,8 @@ md("""## 7. Выводы
 ML-пайплайн: ETL → контроль качества данных → мониторинг дрейфа → обучение
 четырёх моделей разной природы → сводное сравнение → визуализации. Каждая
 стадия использует ту же реализацию, что и production-пайплайн
-(`src.pipeline.run()`); разница лишь в интерактивной разбивке по шагам.
+(`knowledge_tracing.pipeline.run_pipeline()`, команда `kt train`); разница
+лишь в интерактивной разбивке по шагам.
 
 **Содержательные итоги.**
 
@@ -547,21 +539,23 @@ Actions) и связь с критериями оценивания описан
 md("""## 8. Воспроизведение полного пайплайна одной командой
 
 Ниже — необязательная ячейка, выполняющая **весь** пайплайн через
-`src.pipeline.run(...)` с записью метрик и артефактов в MLflow и
-`reports/`. Эта же функция вызывается через CLI (`python -m src.pipeline`)
-и в контейнере (`docker run kt-pipeline`). При установленной локально
-MLflow-инфраструктуре результаты будут видны в UI:
+`run_pipeline(cfg, ...)`: метрики и графики записываются в `artifacts/`,
+запуск — в MLflow, а модель DKT+Optuna сохраняется в `artifacts/model` и
+регистрируется в Model Registry как `challenger`, если проходит порог
+качества. Эта же функция вызывается командой `kt train` и в контейнере
+(`docker run kt-pipeline train --data-source full`). Результаты видны в
+MLflow UI:
 
 ```bash
-mlflow ui --backend-store-uri file:./mlruns --port 5000
+make mlflow   # mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
 ```
 
 Открыть в браузере <http://localhost:5000>.
 """)
 
 code("""# Раскомментируйте для полного прогона (на full-датасете занимает 20–45 минут):
-# from knowledge_tracing.pipeline import run
-# summary = run('config/config.yaml', data_source='full')
+# from knowledge_tracing.pipeline import run_pipeline
+# summary = run_pipeline(cfg, data_source='full')
 # summary['results']
 """)
 

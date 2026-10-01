@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test etl train train-quick train-full predict promote present mlflow docker docker-run clean
+.PHONY: install lint format typecheck test etl train train-quick train-full predict promote publish-report present mlflow docker docker-run clean
 
 # Every command runs inside the project virtualenv (.venv/) managed by Poetry.
 RUN ?= poetry run
@@ -47,6 +47,11 @@ predict:
 promote:
 	$(RUN) kt promote
 
+# Publish the latest run (artifacts/) as the versioned results referenced from README.
+publish-report:
+	cp artifacts/metrics.json reports/metrics.json
+	cp artifacts/figures/*.png reports/figures/
+
 present:
 	poetry install --with presentation
 	$(RUN) python scripts/build_deck.py
@@ -58,7 +63,7 @@ docker:
 	docker build -t kt-pipeline:latest .
 
 docker-run:
-	docker run --rm -v $$(pwd)/reports:/app/reports -v $$(pwd)/artifacts:/app/artifacts -v $$(pwd)/mlruns:/app/mlruns kt-pipeline:latest
+	docker run --rm -v $$(pwd)/artifacts:/app/artifacts -v $$(pwd)/mlruns:/app/mlruns kt-pipeline:latest
 
 clean:
-	rm -rf data/raw/* data/processed/* mlruns/* artifacts/* reports/figures/* reports/metrics.json
+	rm -rf data/raw/* data/processed/* mlruns/* artifacts/*

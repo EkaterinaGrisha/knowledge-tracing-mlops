@@ -59,6 +59,8 @@ serving:
   min_test_auc: 0.75
 
 output:
-  figures_dir: "reports/figures"
-  metrics_path: "reports/metrics.json"
+  # Every run writes here (git-ignored). The results published in the README
+  # live in reports/ and are refreshed deliberately: make publish-report.
+  figures_dir: "artifacts/figures"
+  metrics_path: "artifacts/metrics.json"
   model_dir: "artifacts/model"
