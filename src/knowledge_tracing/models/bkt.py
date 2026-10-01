@@ -12,7 +12,9 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..etl.datasets import StudentSequence
+from ..config import BKTConfig
+from ..etl.datasets import SplitData, StudentSequence, TrainingData
+from .base import KnowledgeTracingModel, NotFittedError, Predictions
 
 
 @dataclass
@@ -187,3 +189,23 @@ def predict_bkt(
             y_true.extend(seq)
             y_pred.extend(preds)
     return np.asarray(y_true, dtype=int), np.asarray(y_pred, dtype=float)
+
+
+class BKTModel(KnowledgeTracingModel):
+    """Per-skill BKT fitted with EM — the interpretable baseline."""
+
+    name = "BKT"
+
+    def __init__(self, cfg: BKTConfig) -> None:
+        self.cfg = cfg
+        self.params_: dict[int, BktParams] | None = None
+        self.n_skills_ = 0
+
+    def fit(self, data: TrainingData) -> None:
+        self.n_skills_ = data.n_skills
+        self.params_ = fit_bkt_per_skill(data.train.sequences, data.n_skills, self.cfg.em_iters)
+
+    def predict(self, split: SplitData) -> Predictions:
+        if self.params_ is None:
+            raise NotFittedError(f"{self.name} is not fitted")
+        return predict_bkt(self.params_, split.sequences, self.n_skills_)

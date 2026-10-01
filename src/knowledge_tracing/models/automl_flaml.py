@@ -8,11 +8,16 @@ features. This is the "ready AutoML framework" track of the assignment.
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 from flaml import AutoML
 
+from ..config import AutoMLConfig
+from ..etl.datasets import SplitData, TrainingData
 from ..utils import get_logger
+from .base import KnowledgeTracingModel, NotFittedError, Predictions
 
 LOG = get_logger()
 
@@ -50,3 +55,49 @@ def predict_automl(automl: AutoML, X: pd.DataFrame, y: pd.Series) -> tuple[np.nd
     """Predictions on a feature frame: (observed correctness, P(correct))."""
     proba = automl.predict_proba(X)[:, 1]
     return y.to_numpy().astype(int), proba
+
+
+class AutoMLModel(KnowledgeTracingModel):
+    """FLAML picks and tunes a tabular estimator on the causal features."""
+
+    name = "AutoML"
+
+    def __init__(self, cfg: AutoMLConfig, seed: int) -> None:
+        self.cfg = cfg
+        self.seed = seed
+        self.automl_: AutoML | None = None
+        self.feature_names_: list[str] = []
+
+    def fit(self, data: TrainingData) -> None:
+        self.feature_names_ = list(data.train.features.columns)
+        self.automl_ = train_automl(
+            data.train.features,
+            data.train.target,
+            data.val.features,
+            data.val.target,
+            time_budget_s=self.cfg.time_budget_s,
+            metric=self.cfg.metric,
+            estimator_list=list(self.cfg.estimator_list),
+            seed=self.seed,
+        )
+
+    def _automl(self) -> AutoML:
+        if self.automl_ is None:
+            raise NotFittedError(f"{self.name} is not fitted")
+        return self.automl_
+
+    def predict(self, split: SplitData) -> Predictions:
+        return predict_automl(self._automl(), split.features, split.target)
+
+    def mlflow_params(self) -> dict[str, Any]:
+        return {"automl_best_estimator": self._automl().best_estimator}
+
+    def report(self) -> dict[str, Any]:
+        return {"automl_best_estimator": self._automl().best_estimator}
+
+    def feature_importance(self) -> pd.Series | None:
+        estimator = getattr(getattr(self.automl_, "model", None), "estimator", None)
+        importances = getattr(estimator, "feature_importances_", None)
+        if importances is None:
+            return None
+        return pd.Series(np.asarray(importances), index=self.feature_names_)

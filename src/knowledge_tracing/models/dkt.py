@@ -9,13 +9,17 @@ correctness of step t+1; loss is taken only on the skill actually seen next
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
-from ..etl.datasets import StudentSequence
+from ..config import DKTConfig
+from ..etl.datasets import SplitData, StudentSequence, TrainingData
 from ..utils import get_logger
+from .base import KnowledgeTracingModel, NotFittedError, Predictions
 
 LOG = get_logger()
 
@@ -153,3 +157,60 @@ def pick_device() -> torch.device:
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
+
+
+@dataclass(frozen=True)
+class DKTHyperparameters:
+    """Architecture and optimiser settings of one DKT network."""
+
+    embed_dim: int
+    hidden_dim: int
+    dropout: float
+    lr: float
+    batch_size: int
+
+
+class DKTModel(KnowledgeTracingModel):
+    """DKT with the hand-picked architecture from the config."""
+
+    name = "DKT"
+
+    def __init__(self, cfg: DKTConfig, seed: int) -> None:
+        self.cfg = cfg
+        self.seed = seed
+        self.device = pick_device()
+        self.hyperparameters_: DKTHyperparameters | None = None
+        self.network_: DKTNetwork | None = None
+        self.losses_: list[float] = []
+        self.n_skills_ = 0
+
+    def fit(self, data: TrainingData) -> None:
+        cfg = self.cfg
+        self._fit_with(
+            data,
+            DKTHyperparameters(cfg.embed_dim, cfg.hidden_dim, cfg.dropout, cfg.lr, cfg.batch_size),
+        )
+
+    def _fit_with(self, data: TrainingData, hp: DKTHyperparameters) -> None:
+        self.hyperparameters_ = hp
+        self.n_skills_ = data.n_skills
+        self.network_, self.losses_ = train_dkt(
+            data.train.sequences,
+            data.n_skills,
+            device=self.device,
+            embed_dim=hp.embed_dim,
+            hidden_dim=hp.hidden_dim,
+            dropout=hp.dropout,
+            epochs=self.cfg.epochs,
+            batch_size=hp.batch_size,
+            lr=hp.lr,
+            seed=self.seed,
+        )
+
+    def predict(self, split: SplitData) -> Predictions:
+        if self.network_ is None:
+            raise NotFittedError(f"{self.name} is not fitted")
+        return predict_dkt(self.network_, split.sequences, self.device)
+
+    def training_curve(self) -> list[float]:
+        return list(self.losses_)

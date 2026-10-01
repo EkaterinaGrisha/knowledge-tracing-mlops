@@ -1,8 +1,8 @@
 """End-to-end automated ML pipeline for Knowledge Tracing.
 
-Stages: ETL (extract/transform/load) -> data-quality gate -> train 4 models
-(BKT, DKT, DKT+Optuna, FLAML AutoML) -> evaluate -> drift monitoring ->
-visualisations -> MLflow logging -> metrics.json.
+Stages: ETL (extract/transform/load) -> data-quality gate -> train and evaluate
+every model (BKT, DKT, DKT+Optuna, FLAML AutoML) -> drift monitoring ->
+MLflow logging -> figures -> metrics.json.
 
 Run:
     python -m knowledge_tracing.pipeline --data-source sample        # fast, offline (CI)
@@ -14,21 +14,30 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 import mlflow
-import numpy as np
 
-from .config import DEFAULT_CONFIG_PATH, PathLike, load_config, quick_overlay_path, resolve_path
-from .etl.datasets import build_sequences
+from .config import (
+    DEFAULT_CONFIG_PATH,
+    Config,
+    MonitoringConfig,
+    PathLike,
+    load_config,
+    quick_overlay_path,
+    resolve_path,
+)
+from .etl.datasets import TrainingData, build_training_data
 from .etl.extract import DataSource, extract
 from .etl.load import load
-from .etl.transform import transform
+from .etl.transform import ProcessedData, transform
 from .evaluation import visualize as viz
 from .evaluation.metrics import compute_metrics
-from .models import bkt as bkt_mod
-from .models import dkt as dkt_mod
-from .models.automl_flaml import predict_automl, train_automl
-from .models.dkt_optuna import search_dkt
+from .models.base import KnowledgeTracingModel, Predictions
+from .models.registry import build_models
 from .monitoring.data_quality import quality_report
 from .monitoring.drift import drift_report
 from .monitoring.resources import ResourceMonitor
@@ -38,207 +47,196 @@ from .utils import get_logger
 LOG = get_logger()
 
 
-def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> dict:
-    overlays = [quick_overlay_path(config_path)] if quick else []
-    cfg = load_config(config_path, overlays)
-    seed = cfg.seed
-    figures_dir = cfg.output.figures_dir
+@dataclass(eq=False)
+class ModelRun:
+    """A trained model with its test predictions, metrics and resource usage."""
 
-    configure_tracking(cfg.mlflow)
+    model: KnowledgeTracingModel
+    predictions: Predictions
+    metrics: dict[str, float]
+    resources: dict[str, float]
 
-    results: dict[str, dict] = {}
-    preds: dict[str, tuple[np.ndarray, np.ndarray]] = {}
-    resources: dict[str, dict] = {}
 
-    with mlflow.start_run(run_name=f"kt-{data_source}{'-quick' if quick else ''}"):
-        mlflow.log_params({"data_source": data_source, "quick": quick, "seed": seed})
+def run_etl(cfg: Config, data_source: DataSource) -> ProcessedData:
+    """Extract -> transform -> load; dataset statistics go to MLflow."""
+    df_raw = extract(cfg.data, data_source=data_source)
+    processed = transform(df_raw, cfg.data, seed=cfg.seed)
+    load(processed, cfg.data.processed_dir)
+    mlflow.log_params(
+        {key: processed.stats[key] for key in ("n_students", "n_skills", "n_interactions")}
+    )
+    return processed
 
-        # ---------- ETL ----------
-        df_raw = extract(cfg.data, data_source=data_source)
-        processed = transform(df_raw, cfg.data, seed=seed)
-        load(processed, cfg.data.processed_dir)
-        mlflow.log_params(
-            {
-                "n_students": processed.stats["n_students"],
-                "n_skills": processed.stats["n_skills"],
-                "n_interactions": processed.stats["n_interactions"],
-            }
+
+def check_data_quality(processed: ProcessedData) -> dict[str, Any]:
+    """Run the data-quality checks on the cleaned interactions."""
+    report = quality_report(processed.long)
+    LOG.info("Data quality: passed=%s", report["passed"])
+    mlflow.log_metric("data_quality_passed", int(report["passed"]))
+    mlflow.log_dict(report, "monitoring/data_quality.json")
+    if not report["passed"]:
+        LOG.warning("Data quality checks failed: %s", report["checks"])
+    return report
+
+
+def train_and_evaluate(
+    models: list[KnowledgeTracingModel], data: TrainingData
+) -> dict[str, ModelRun]:
+    """Fit every model, predict the test split and measure the cost."""
+    runs: dict[str, ModelRun] = {}
+    for model in models:
+        with ResourceMonitor(model.name) as monitor:
+            model.fit(data)
+            predictions = model.predict(data.test)
+        runs[model.name] = ModelRun(
+            model=model,
+            predictions=predictions,
+            metrics=compute_metrics(*predictions),
+            resources=monitor.stats.as_dict(),
         )
+        if params := model.mlflow_params():
+            mlflow.log_params(params)
+        for key, value in model.mlflow_metrics().items():
+            mlflow.log_metric(key, value)
+    return runs
 
-        # ---------- data quality gate ----------
-        dq = quality_report(processed.long)
-        LOG.info("Data quality: passed=%s", dq["passed"])
-        mlflow.log_metric("data_quality_passed", int(dq["passed"]))
-        mlflow.log_dict(dq, "monitoring/data_quality.json")
-        if not dq["passed"]:
-            LOG.warning("Data quality checks failed: %s", dq["checks"])
 
-        # ---------- sequences for BKT/DKT ----------
-        train_seq = build_sequences(processed.long, "train")
-        val_seq = build_sequences(processed.long, "val")
-        test_seq = build_sequences(processed.long, "test")
-        n_skills = processed.n_skills
+def monitor_drift(processed: ProcessedData, cfg: MonitoringConfig) -> dict[str, Any]:
+    """Compare feature distributions of the test split against the train split."""
+    features = processed.features
+    drift = drift_report(
+        features[features["split"] == "train"],
+        features[features["split"] == "test"],
+        processed.feature_cols,
+        psi_warn=cfg.psi_warn,
+        psi_alert=cfg.psi_alert,
+    )
+    LOG.info(
+        "Drift: %s (%d/%d features drifted)",
+        drift["overall_status"],
+        drift["n_significant_drift"],
+        drift["n_features"],
+    )
+    mlflow.log_dict(drift, "monitoring/drift_report.json")
+    return drift
 
-        # ---------- 1) BKT baseline ----------
-        with ResourceMonitor("bkt") as rm:
-            bkt_params = bkt_mod.fit_bkt_per_skill(train_seq, n_skills, cfg.models.bkt.em_iters)
-            yt_bkt, yp_bkt = bkt_mod.predict_bkt(bkt_params, test_seq, n_skills)
-        results["BKT"] = compute_metrics(yt_bkt, yp_bkt)
-        preds["BKT"] = (yt_bkt, yp_bkt)
-        resources["BKT"] = rm.stats.as_dict()
 
-        # ---------- 2) DKT (default config) ----------
-        device = dkt_mod.pick_device()
-        dcfg = cfg.models.dkt
-        with ResourceMonitor("dkt") as rm:
-            dkt_model, losses = dkt_mod.train_dkt(
-                train_seq,
-                n_skills,
-                device=device,
-                embed_dim=dcfg.embed_dim,
-                hidden_dim=dcfg.hidden_dim,
-                dropout=dcfg.dropout,
-                epochs=dcfg.epochs,
-                batch_size=dcfg.batch_size,
-                lr=dcfg.lr,
-                seed=seed,
-            )
-            yt_dkt, yp_dkt = dkt_mod.predict_dkt(dkt_model, test_seq, device)
-        results["DKT"] = compute_metrics(yt_dkt, yp_dkt)
-        preds["DKT"] = (yt_dkt, yp_dkt)
-        resources["DKT"] = rm.stats.as_dict()
+def _metric_prefix(model_name: str) -> str:
+    return model_name.lower().replace("+", "_")
 
-        # ---------- 3) DKT + Optuna (automated HPO) ----------
-        ocfg = cfg.models.dkt_optuna
-        with ResourceMonitor("dkt_optuna") as rm:
-            search = search_dkt(
-                train_seq,
-                val_seq,
-                n_skills,
-                n_trials=ocfg.n_trials,
-                epochs_per_trial=ocfg.epochs_per_trial,
-                seed=seed,
-            )
-            best = search.best_params
-            best_model, _ = dkt_mod.train_dkt(
-                train_seq,
-                n_skills,
-                device=device,
-                embed_dim=best["embed_dim"],
-                hidden_dim=best["hidden_dim"],
-                dropout=best["dropout"],
-                lr=best["lr"],
-                batch_size=best["batch_size"],
-                epochs=dcfg.epochs,
-                seed=seed,
-            )
-            yt_opt, yp_opt = dkt_mod.predict_dkt(best_model, test_seq, device)
-        results["DKT+Optuna"] = compute_metrics(yt_opt, yp_opt)
-        preds["DKT+Optuna"] = (yt_opt, yp_opt)
-        resources["DKT+Optuna"] = rm.stats.as_dict()
-        mlflow.log_params({f"dkt_optuna_{k}": v for k, v in best.items()})
-        mlflow.log_metric("dkt_optuna_best_val_auc", search.best_val_auc)
 
-        # ---------- 4) FLAML AutoML ----------
-        Xtr, ytr = processed.split_xy("train")
-        Xva, yva = processed.split_xy("val")
-        Xte, yte = processed.split_xy("test")
-        acfg = cfg.models.automl_flaml
-        with ResourceMonitor("automl_flaml") as rm:
-            automl = train_automl(
-                Xtr,
-                ytr,
-                Xva,
-                yva,
-                time_budget_s=acfg.time_budget_s,
-                metric=acfg.metric,
-                estimator_list=list(acfg.estimator_list),
-                seed=seed,
-            )
-            yt_aml, yp_aml = predict_automl(automl, Xte, yte)
-        results["AutoML"] = compute_metrics(yt_aml, yp_aml)
-        preds["AutoML"] = (yt_aml, yp_aml)
-        resources["AutoML"] = rm.stats.as_dict()
-        mlflow.log_param("automl_best_estimator", automl.best_estimator)
+def log_model_runs(runs: dict[str, ModelRun]) -> None:
+    """Log test metrics and resource usage of every model to MLflow."""
+    for name, run in runs.items():
+        for key, value in run.metrics.items():
+            if not math.isnan(value):
+                mlflow.log_metric(f"{_metric_prefix(name)}__{key}", value)
+    for name, run in runs.items():
+        for key, value in run.resources.items():
+            mlflow.log_metric(f"{_metric_prefix(name)}__{key}", value)
 
-        # ---------- drift monitoring (train vs test features) ----------
-        ref = processed.features[processed.features["split"] == "train"]
-        cur = processed.features[processed.features["split"] == "test"]
-        drift = drift_report(
-            ref,
-            cur,
-            processed.feature_cols,
-            psi_warn=cfg.monitoring.psi_warn,
-            psi_alert=cfg.monitoring.psi_alert,
-        )
-        LOG.info(
-            "Drift: %s (%d/%d features drifted)",
-            drift["overall_status"],
-            drift["n_significant_drift"],
-            drift["n_features"],
-        )
-        mlflow.log_dict(drift, "monitoring/drift_report.json")
 
-        # ---------- log metrics + resources ----------
-        for model, m in results.items():
-            tag = model.lower().replace("+", "_")
-            for k, v in m.items():
-                if v == v:  # skip NaN
-                    mlflow.log_metric(f"{tag}__{k}", v)
-        for model, r in resources.items():
-            tag = model.lower().replace("+", "_")
-            for k, v in r.items():
-                mlflow.log_metric(f"{tag}__{k}", v)
+def select_best(runs: dict[str, ModelRun]) -> str:
+    """Name of the model with the highest test AUC (an undefined AUC ranks last)."""
 
-        # ---------- visualisations ----------
-        figs = []
-        figs.append(viz.plot_dataset_overview(processed.long, processed.stats, figures_dir))
-        figs.append(viz.plot_model_comparison(results, figures_dir))
-        figs.append(viz.plot_roc(preds, figures_dir))
-        figs.append(viz.plot_dkt_loss(losses, figures_dir))
-        best_name = max(
-            results,
-            key=lambda k: results[k]["auc"] if results[k]["auc"] == results[k]["auc"] else -1,
-        )
-        y_true_best, y_pred_best = preds[best_name]
-        figs.append(viz.plot_confusion(y_true_best, y_pred_best, best_name, figures_dir))
-        figs.append(viz.plot_calibration(y_true_best, y_pred_best, best_name, figures_dir))
-        try:
-            est = automl.model.estimator
-            importances = getattr(est, "feature_importances_", None)
-            if importances is not None:
-                figs.append(
-                    viz.plot_feature_importance(list(Xtr.columns), importances, figures_dir)
+    def auc(name: str) -> float:
+        value = runs[name].metrics["auc"]
+        return -1.0 if math.isnan(value) else value
+
+    return max(runs, key=auc)
+
+
+def build_figures(
+    processed: ProcessedData, runs: dict[str, ModelRun], best_name: str, figures_dir: Path
+) -> list[Path]:
+    """Render the report figures; returns the written files."""
+    results = {name: run.metrics for name, run in runs.items()}
+    predictions = {name: run.predictions for name, run in runs.items()}
+    figures = [
+        viz.plot_dataset_overview(processed.long, processed.stats, figures_dir),
+        viz.plot_model_comparison(results, figures_dir),
+        viz.plot_roc(predictions, figures_dir),
+    ]
+    if "DKT" in runs:
+        figures.append(viz.plot_dkt_loss(runs["DKT"].model.training_curve(), figures_dir))
+    y_true, y_pred = runs[best_name].predictions
+    figures.append(viz.plot_confusion(y_true, y_pred, best_name, figures_dir))
+    figures.append(viz.plot_calibration(y_true, y_pred, best_name, figures_dir))
+    for run in runs.values():
+        importance = run.model.feature_importance()
+        if importance is not None:
+            figures.append(
+                viz.plot_feature_importance(
+                    list(importance.index), importance.to_numpy(), figures_dir
                 )
-        except Exception as exc:
-            LOG.warning("Feature importance unavailable: %s", exc)
-        for f in figs:
-            mlflow.log_artifact(str(f), artifact_path="figures")
+            )
+            break
+    else:
+        LOG.warning("Feature importance unavailable")
+    return figures
 
-        # ---------- write metrics.json ----------
-        summary = {
+
+def write_summary(summary: dict[str, Any], metrics_path: Path) -> Path:
+    """Write the run summary as JSON and return its location."""
+    path = resolve_path(metrics_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        json.dump(summary, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    return path
+
+
+def run_pipeline(cfg: Config, data_source: DataSource, *, quick: bool = False) -> dict[str, Any]:
+    """Run every stage of the pipeline inside one MLflow run.
+
+    Args:
+        cfg: Validated configuration.
+        data_source: ``"sample"`` (committed subset) or ``"full"`` (full dataset).
+        quick: Marks the run as a smoke run with reduced budgets (already applied
+            to ``cfg`` via the quick overlay); used for the run name.
+
+    Returns:
+        The summary also written to ``cfg.output.metrics_path``.
+    """
+    configure_tracking(cfg.mlflow)
+    with mlflow.start_run(run_name=f"kt-{data_source}{'-quick' if quick else ''}"):
+        mlflow.log_params({"data_source": data_source, "quick": quick, "seed": cfg.seed})
+
+        processed = run_etl(cfg, data_source)
+        dq = check_data_quality(processed)
+        data = build_training_data(processed)
+        runs = train_and_evaluate(build_models(cfg.models, cfg.seed), data)
+        drift = monitor_drift(processed, cfg.monitoring)
+        log_model_runs(runs)
+
+        best_name = select_best(runs)
+        for figure in build_figures(processed, runs, best_name, cfg.output.figures_dir):
+            mlflow.log_artifact(str(figure), artifact_path="figures")
+
+        summary: dict[str, Any] = {
             "data_source": data_source,
             "dataset": processed.stats,
-            "results": results,
-            "resources": resources,
+            "results": {name: run.metrics for name, run in runs.items()},
+            "resources": {name: run.resources for name, run in runs.items()},
             "best_model": best_name,
             "drift": drift,
             "data_quality_passed": dq["passed"],
-            "automl_best_estimator": automl.best_estimator,
-            "dkt_optuna_best_params": best,
         }
-        metrics_path = resolve_path(cfg.output.metrics_path)
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        with metrics_path.open("w", encoding="utf-8") as fh:
-            json.dump(summary, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        mlflow.log_artifact(str(metrics_path))
+        for run in runs.values():
+            summary.update(run.model.report())
+        mlflow.log_artifact(str(write_summary(summary, cfg.output.metrics_path)))
 
     _print_summary(summary)
     return summary
 
 
-def _print_summary(summary: dict) -> None:
+def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> dict[str, Any]:
+    """Load the configuration (plus the quick overlay if requested) and run the pipeline."""
+    overlays = [quick_overlay_path(config_path)] if quick else []
+    return run_pipeline(load_config(config_path, overlays), data_source, quick=quick)
+
+
+def _print_summary(summary: dict[str, Any]) -> None:
     LOG.info("=" * 64)
     LOG.info("RESULTS (test, one-step-ahead correctness prediction)")
     LOG.info("%-12s %8s %8s %8s %8s", "model", "AUC", "ACC", "F1", "RMSE")
@@ -249,7 +247,7 @@ def _print_summary(summary: dict) -> None:
     LOG.info(
         "Best model: %s | AutoML estimator: %s",
         summary["best_model"],
-        summary["automl_best_estimator"],
+        summary.get("automl_best_estimator"),
     )
     LOG.info("=" * 64)
 

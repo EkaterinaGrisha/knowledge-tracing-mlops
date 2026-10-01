@@ -13,10 +13,12 @@ from typing import Any
 
 import optuna
 
-from ..etl.datasets import StudentSequence
+from ..config import DKTConfig, DKTOptunaConfig
+from ..etl.datasets import StudentSequence, TrainingData
 from ..evaluation.metrics import roc_auc
 from ..utils import get_logger
-from .dkt import pick_device, predict_dkt, train_dkt
+from .base import NotFittedError
+from .dkt import DKTHyperparameters, DKTModel, pick_device, predict_dkt, train_dkt
 
 LOG = get_logger()
 
@@ -68,3 +70,50 @@ def search_dkt(
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
     LOG.info("Optuna best val AUC=%.4f params=%s", study.best_value, study.best_params)
     return SearchResult(study.best_params, float(study.best_value), study)
+
+
+class DKTOptunaModel(DKTModel):
+    """DKT whose architecture is chosen by an Optuna search on the validation split."""
+
+    name = "DKT+Optuna"
+
+    def __init__(self, search_cfg: DKTOptunaConfig, dkt_cfg: DKTConfig, seed: int) -> None:
+        super().__init__(dkt_cfg, seed)
+        self.search_cfg = search_cfg
+        self.search_: SearchResult | None = None
+
+    def fit(self, data: TrainingData) -> None:
+        self.search_ = search_dkt(
+            data.train.sequences,
+            data.val.sequences,
+            data.n_skills,
+            n_trials=self.search_cfg.n_trials,
+            epochs_per_trial=self.search_cfg.epochs_per_trial,
+            seed=self.seed,
+        )
+        best = self.search_.best_params
+        # the winning architecture is retrained for the full number of epochs
+        self._fit_with(
+            data,
+            DKTHyperparameters(
+                embed_dim=best["embed_dim"],
+                hidden_dim=best["hidden_dim"],
+                dropout=best["dropout"],
+                lr=best["lr"],
+                batch_size=best["batch_size"],
+            ),
+        )
+
+    def _search(self) -> SearchResult:
+        if self.search_ is None:
+            raise NotFittedError(f"{self.name} is not fitted")
+        return self.search_
+
+    def mlflow_params(self) -> dict[str, Any]:
+        return {f"dkt_optuna_{k}": v for k, v in self._search().best_params.items()}
+
+    def mlflow_metrics(self) -> dict[str, float]:
+        return {"dkt_optuna_best_val_auc": self._search().best_val_auc}
+
+    def report(self) -> dict[str, Any]:
+        return {"dkt_optuna_best_params": self._search().best_params}

@@ -1,7 +1,8 @@
 """Model-ready views of the processed data.
 
-Sequence models (BKT, DKT) consume per-student chronological sequences built
-from the cleaned long frame.
+Sequence models (BKT, DKT) consume per-student chronological sequences; the
+tabular AutoML model consumes the causal feature frame. ``TrainingData``
+bundles both views for the train / validation / test splits.
 """
 
 from __future__ import annotations
@@ -10,6 +11,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+
+from .transform import ProcessedData
 
 
 @dataclass(frozen=True, eq=False)
@@ -36,3 +39,32 @@ def build_sequences(long: pd.DataFrame, split: str) -> list[StudentSequence]:
         )
         for uid, grp in sub.groupby("user_id")
     ]
+
+
+@dataclass(frozen=True, eq=False)
+class SplitData:
+    """One split (train / val / test) in both representations the models use."""
+
+    sequences: list[StudentSequence]  # per-student sequences (BKT, DKT)
+    features: pd.DataFrame  # causal tabular features (AutoML)
+    target: pd.Series  # correctness of every interaction in ``features``
+
+
+@dataclass(frozen=True, eq=False)
+class TrainingData:
+    """Train / validation / test splits shared by all models."""
+
+    train: SplitData
+    val: SplitData
+    test: SplitData
+    n_skills: int
+
+
+def build_training_data(processed: ProcessedData) -> TrainingData:
+    """Assemble the model inputs of every split from the processed data."""
+
+    def split(name: str) -> SplitData:
+        features, target = processed.split_xy(name)
+        return SplitData(build_sequences(processed.long, name), features, target)
+
+    return TrainingData(split("train"), split("val"), split("test"), processed.n_skills)
