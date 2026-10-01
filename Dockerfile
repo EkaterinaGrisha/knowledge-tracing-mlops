@@ -1,41 +1,55 @@
 # syntax=docker/dockerfile:1
 # ----------------------------------------------------------------------------
 # Knowledge Tracing ML pipeline — reproducible container image.
-# Slim CPU base keeps the image small; deps are installed in a cached layer
-# before the source is copied so code changes don't re-trigger pip installs.
+# Two stages: the builder installs the dependencies pinned in poetry.lock into
+# an in-project virtualenv; the runtime image receives only that .venv and the
+# code (no Poetry, no build caches). The dependency layer is cached until
+# pyproject.toml / poetry.lock change, so code edits rebuild in seconds.
 # ----------------------------------------------------------------------------
-FROM python:3.11-slim
+FROM python:3.11-slim AS builder
+
+ENV PIP_NO_CACHE_DIR=1 \
+    POETRY_VERSION=2.5.1 \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_CACHE_DIR=/tmp/poetry-cache
+
+RUN pip install "poetry==${POETRY_VERSION}"
+
+WORKDIR /app
+COPY pyproject.toml poetry.lock poetry.toml ./
+# Runtime dependencies only (no dev tools). On Linux the lock file resolves
+# torch to the CPU-only build, so there is no CUDA payload.
+RUN poetry install --only main --no-root && rm -rf "${POETRY_CACHE_DIR}"
+
+
+FROM python:3.11-slim AS runtime
 
 # - PYTHONDONTWRITEBYTECODE: no .pyc clutter
 # - PYTHONUNBUFFERED: stream logs straight to docker logs
-# - PIP_NO_CACHE_DIR: smaller image (no pip wheel cache)
+# - VIRTUAL_ENV / PATH: use the virtualenv built in the previous stage
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
     MPLBACKEND=Agg \
-    MLFLOW_ALLOW_FILE_STORE=true
+    MLFLOW_ALLOW_FILE_STORE=true \
+    VIRTUAL_ENV=/app/.venv \
+    PATH="/app/.venv/bin:${PATH}"
 
-WORKDIR /app
-
-# System libs required by lightgbm (libgomp) and matplotlib; cleaned up after.
+# System lib required by lightgbm (libgomp); apt lists cleaned up after.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only torch separately (no CUDA payload) to keep the image lean.
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
-    || pip install --no-cache-dir torch
-
-# Dependency layer (cached unless requirements.txt changes).
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Application code + committed sample dataset.
-COPY . .
-
-# Run as a non-root user (security: limits blast radius if the container is compromised).
+# Run as a non-root user (security: limits blast radius if the container is
+# compromised). The user owns /app and the code so the pipeline can write
+# reports/ and mlruns/; the virtualenv stays root-owned and read-only.
 RUN useradd --create-home --uid 1000 mluser \
-    && chown -R mluser:mluser /app
+    && mkdir /app && chown mluser:mluser /app
+WORKDIR /app
+
+COPY --from=builder /app/.venv /app/.venv
+# Application code + committed sample dataset.
+COPY --chown=mluser:mluser . .
 USER mluser
 
 # Default: run the pipeline on the committed sample (fully offline, reproducible).
