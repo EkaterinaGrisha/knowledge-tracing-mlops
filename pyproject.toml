@@ -36,7 +36,7 @@ package-mode = false
 # macOS uses the regular PyPI wheels.
 torch = [
     { markers = "sys_platform == 'linux'", source = "pytorch-cpu" },
-    { markers = "sys_platform != 'linux'", source = "pypi" },
+    { markers = "sys_platform != 'linux'" },
 ]
 
 [[tool.poetry.source]]
