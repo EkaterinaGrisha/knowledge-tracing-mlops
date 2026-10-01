@@ -1,13 +1,19 @@
 """Data-quality gate: schema, ranges, nulls, duplicates.
 
-Run on the cleaned long frame before training. Returns a report with per-check
-pass/fail; `passed` is False if any hard check fails (the pipeline logs this to
-MLflow and surfaces it in the run summary).
+Run on the cleaned long frame before training. ``quality_report`` returns a
+report with per-check pass/fail; ``passed`` is False if any hard check fails.
+``enforce_quality_gate`` turns a failed report into an error, so models are
+never trained on data that violates the schema.
 """
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 import pandas as pd
+
+LOG = logging.getLogger(__name__)
 
 REQUIRED_COLUMNS = ["user_id", "order_idx", "skill_idx", "correct", "split"]
 
@@ -32,3 +38,26 @@ def quality_report(long: pd.DataFrame) -> dict:
 
     passed = all(c["passed"] for c in checks.values())
     return {"passed": passed, "checks": checks}
+
+
+class DataQualityError(RuntimeError):
+    """The data-quality gate failed; training must not proceed."""
+
+
+def failed_checks(report: dict[str, Any]) -> list[str]:
+    """Names of the checks that did not pass."""
+    return [name for name, check in report["checks"].items() if not check["passed"]]
+
+
+def enforce_quality_gate(report: dict[str, Any], *, fail: bool) -> None:
+    """Stop the pipeline (or only warn when ``fail`` is False) if any check failed.
+
+    Raises:
+        DataQualityError: Some checks failed and ``fail`` is True.
+    """
+    if report["passed"]:
+        return
+    message = f"data-quality checks failed: {', '.join(failed_checks(report))}"
+    if fail:
+        raise DataQualityError(message)
+    LOG.warning("%s — continuing because monitoring.fail_on_data_quality is false", message)

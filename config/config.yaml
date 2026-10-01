@@ -38,6 +38,8 @@ models:
     estimator_list: ["lgbm", "xgboost", "rf", "extra_tree"]
 
 monitoring:
+  # Stop the run when a data-quality check fails (false: log a warning and continue).
+  fail_on_data_quality: true
   # PSI thresholds: <0.1 stable, 0.1-0.25 moderate drift, >0.25 significant drift.
   psi_warn: 0.10
   psi_alert: 0.25

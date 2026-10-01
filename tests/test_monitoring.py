@@ -1,7 +1,14 @@
+import logging
+
 import numpy as np
 import pandas as pd
+import pytest
 
-from knowledge_tracing.monitoring.data_quality import quality_report
+from knowledge_tracing.monitoring.data_quality import (
+    DataQualityError,
+    enforce_quality_gate,
+    quality_report,
+)
 from knowledge_tracing.monitoring.drift import drift_report
 
 
@@ -47,3 +54,25 @@ def test_quality_report_flags_bad_labels():
     report = quality_report(long)
     assert report["passed"] is False
     assert report["checks"]["binary_labels"]["passed"] is False
+
+
+def _report_with_failure() -> dict:
+    long = pd.DataFrame(
+        {"user_id": [0], "order_idx": [0], "skill_idx": [0], "correct": [5], "split": ["train"]}
+    )
+    return quality_report(long)
+
+
+def test_quality_gate_stops_on_failure():
+    with pytest.raises(DataQualityError, match="binary_labels"):
+        enforce_quality_gate(_report_with_failure(), fail=True)
+
+
+def test_quality_gate_can_only_warn(caplog):
+    with caplog.at_level(logging.WARNING):
+        enforce_quality_gate(_report_with_failure(), fail=False)
+    assert "binary_labels" in caplog.text
+
+
+def test_quality_gate_passes_clean_report():
+    enforce_quality_gate({"passed": True, "checks": {}}, fail=True)

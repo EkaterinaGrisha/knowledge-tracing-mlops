@@ -107,8 +107,9 @@ class ModelsConfig(_Section):
 
 
 class MonitoringConfig(_Section):
-    """Drift thresholds (PSI)."""
+    """Data-quality gate behaviour and drift thresholds (PSI)."""
 
+    fail_on_data_quality: bool
     psi_warn: PositiveFloat
     psi_alert: PositiveFloat
 

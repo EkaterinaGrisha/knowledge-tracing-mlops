@@ -38,7 +38,7 @@ from .evaluation import visualize as viz
 from .evaluation.metrics import compute_metrics
 from .models.base import KnowledgeTracingModel, Predictions
 from .models.registry import build_models
-from .monitoring.data_quality import quality_report
+from .monitoring.data_quality import enforce_quality_gate, quality_report
 from .monitoring.drift import drift_report
 from .monitoring.resources import ResourceMonitor
 from .tracking import configure_tracking
@@ -68,14 +68,20 @@ def run_etl(cfg: Config, data_source: DataSource) -> ProcessedData:
     return processed
 
 
-def check_data_quality(processed: ProcessedData) -> dict[str, Any]:
-    """Run the data-quality checks on the cleaned interactions."""
+def check_data_quality(processed: ProcessedData, cfg: MonitoringConfig) -> dict[str, Any]:
+    """Run the data-quality gate on the cleaned interactions.
+
+    The report is logged to MLflow before the gate is enforced, so a failed
+    run still shows which checks failed.
+
+    Raises:
+        DataQualityError: A check failed and ``cfg.fail_on_data_quality`` is set.
+    """
     report = quality_report(processed.long)
     LOG.info("Data quality: passed=%s", report["passed"])
     mlflow.log_metric("data_quality_passed", int(report["passed"]))
     mlflow.log_dict(report, "monitoring/data_quality.json")
-    if not report["passed"]:
-        LOG.warning("Data quality checks failed: %s", report["checks"])
+    enforce_quality_gate(report, fail=cfg.fail_on_data_quality)
     return report
 
 
@@ -203,7 +209,7 @@ def run_pipeline(cfg: Config, data_source: DataSource, *, quick: bool = False) -
         mlflow.log_params({"data_source": data_source, "quick": quick, "seed": cfg.seed})
 
         processed = run_etl(cfg, data_source)
-        dq = check_data_quality(processed)
+        dq = check_data_quality(processed, cfg.monitoring)
         data = build_training_data(processed)
         runs = train_and_evaluate(build_models(cfg.models, cfg.seed), data)
         drift = monitor_drift(processed, cfg.monitoring)
