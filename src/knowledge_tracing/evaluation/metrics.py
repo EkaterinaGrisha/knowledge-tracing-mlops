@@ -13,6 +13,11 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+# A predicted P(correct) above the threshold counts as "will answer correctly".
+DECISION_THRESHOLD = 0.5
+# Probabilities are clipped away from 0 and 1 so log-loss stays finite.
+PROBA_EPS = 1e-7
+
 
 def roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """ROC-AUC of raw scores; NaN when only one class is present."""
@@ -23,9 +28,14 @@ def roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
 
 
 def compute_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict[str, float]:
+    """Classification metrics of P(correct) predictions against observed answers.
+
+    AUC and log-loss are NaN when ``y_true`` contains a single class; ``n`` is
+    the number of evaluated interactions.
+    """
     yt = np.asarray(y_true).astype(int)
-    yp = np.clip(np.asarray(y_pred_proba, dtype=float), 1e-7, 1 - 1e-7)
-    yhat = (yp > 0.5).astype(int)
+    yp = np.clip(np.asarray(y_pred_proba, dtype=float), PROBA_EPS, 1 - PROBA_EPS)
+    yhat = (yp > DECISION_THRESHOLD).astype(int)
     has_both = len(set(yt.tolist())) > 1
     return {
         "auc": float(roc_auc_score(yt, yp)) if has_both else float("nan"),

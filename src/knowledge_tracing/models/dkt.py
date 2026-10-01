@@ -9,6 +9,7 @@ correctness of step t+1; loss is taken only on the skill actually seen next
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
@@ -18,10 +19,9 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from ..config import DKTConfig
 from ..etl.datasets import SplitData, StudentSequence, TrainingData
-from ..utils import get_logger
 from .base import KnowledgeTracingModel, NotFittedError, Predictions
 
-LOG = get_logger()
+LOG = logging.getLogger(__name__)
 
 Batch = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 

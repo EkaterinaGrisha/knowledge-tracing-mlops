@@ -14,6 +14,7 @@ Two source modes:
 
 from __future__ import annotations
 
+import logging
 import time
 from pathlib import Path
 from typing import Literal
@@ -22,9 +23,8 @@ import pandas as pd
 import requests
 
 from ..config import DataConfig, resolve_path
-from ..utils import get_logger
 
-LOG = get_logger()
+LOG = logging.getLogger(__name__)
 LONG_COLUMNS = ["user_id", "order_idx", "skill_id", "correct"]
 DataSource = Literal["sample", "full"]
 

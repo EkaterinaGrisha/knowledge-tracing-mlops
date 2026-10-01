@@ -12,15 +12,15 @@ long frame (used to build per-student sequences for DKT/BKT downstream).
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
 
 from ..config import DataConfig
-from ..utils import get_logger
 
-LOG = get_logger()
+LOG = logging.getLogger(__name__)
 
 FEATURE_COLS = [
     "skill_idx",

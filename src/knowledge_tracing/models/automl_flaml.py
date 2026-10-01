@@ -8,6 +8,7 @@ features. This is the "ready AutoML framework" track of the assignment.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -16,10 +17,9 @@ from flaml import AutoML
 
 from ..config import AutoMLConfig
 from ..etl.datasets import SplitData, TrainingData
-from ..utils import get_logger
 from .base import KnowledgeTracingModel, NotFittedError, Predictions
 
-LOG = get_logger()
+LOG = logging.getLogger(__name__)
 
 
 def train_automl(

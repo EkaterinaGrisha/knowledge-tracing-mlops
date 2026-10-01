@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import logging
 from pathlib import Path
 
 from ..config import DEFAULT_CONFIG_PATH, PathLike, load_config
-from ..utils import get_logger
+from ..logging_setup import configure_logging
 from .extract import DataSource, extract
 from .load import load
 from .transform import ProcessedData, transform
 
-LOG = get_logger()
+# Explicit name: this module also runs as __main__ (python -m ...).
+LOG = logging.getLogger("knowledge_tracing.etl.run")
 
 
 def run_etl(
@@ -29,6 +31,7 @@ def main() -> None:
     ap.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     ap.add_argument("--data-source", choices=["sample", "full"], default="sample")
     args = ap.parse_args()
+    configure_logging()
     _, paths = run_etl(args.config, args.data_source)
     LOG.info("ETL artifacts: %s", {k: str(v) for k, v in paths.items()})
 

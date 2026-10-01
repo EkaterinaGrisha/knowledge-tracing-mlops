@@ -12,15 +12,16 @@ Reads reports/metrics.json + reports/figures/*.png. Run after the pipeline:
 from __future__ import annotations
 
 import json
+import logging
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 
 from knowledge_tracing.config import resolve_path
-from knowledge_tracing.utils import get_logger
+from knowledge_tracing.logging_setup import DATE_FORMAT, LOG_FORMAT
 
-LOG = get_logger()
+LOG = logging.getLogger("build_deck")
 
 NAVY = RGBColor(0x1F, 0x2D, 0x5A)
 BLUE = RGBColor(0x4C, 0x72, 0xB0)
@@ -574,4 +575,5 @@ def build(output: str = "presentation/presentation.pptx") -> str:
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT, datefmt=DATE_FORMAT)
     build()

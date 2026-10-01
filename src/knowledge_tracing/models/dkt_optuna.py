@@ -8,6 +8,7 @@ configuration and report it on the test split.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,11 +17,10 @@ import optuna
 from ..config import DKTConfig, DKTOptunaConfig
 from ..etl.datasets import StudentSequence, TrainingData
 from ..evaluation.metrics import roc_auc
-from ..utils import get_logger
 from .base import NotFittedError
 from .dkt import DKTHyperparameters, DKTModel, pick_device, predict_dkt, train_dkt
 
-LOG = get_logger()
+LOG = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)

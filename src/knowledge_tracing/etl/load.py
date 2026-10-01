@@ -8,13 +8,13 @@ from extraction/transformation and the artifacts are inspectable.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 from ..config import resolve_path
-from ..utils import get_logger
 from .transform import ProcessedData
 
-LOG = get_logger()
+LOG = logging.getLogger(__name__)
 
 
 def load(processed: ProcessedData, processed_dir: Path) -> dict[str, Path]:

@@ -3,50 +3,38 @@
 A single theme + a fixed per-model colour map are applied across every chart so
 the whole report reads as one consistent visual language (white grid, despined
 axes, muted colourblind-safe palette).
+
+Figures are built with matplotlib's object-oriented API (no pyplot state, no
+GUI backend) and the theme is applied only while a figure is drawn, so
+importing this module changes no global settings.
 """
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any, ParamSpec, cast
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from cycler import cycler
 from matplotlib.container import BarContainer
+from matplotlib.figure import Figure
+from matplotlib.typing import RcKeyType
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import confusion_matrix, roc_curve
 
 from ..config import resolve_path
-from ..utils import get_logger
+from .metrics import DECISION_THRESHOLD
 
-LOG = get_logger()
-
-# ── unified theme ──────────────────────────────────────────────────────────
-sns.set_theme(context="notebook", style="whitegrid", palette="deep", font_scale=1.05)
-plt.rcParams.update(
-    {
-        "figure.dpi": 120,
-        "savefig.dpi": 150,
-        "savefig.bbox": "tight",
-        "font.family": "DejaVu Sans",
-        "axes.titleweight": "bold",
-        "axes.titlesize": 13,
-        "axes.labelsize": 11,
-        "axes.edgecolor": "#3A3A3A",
-        "axes.linewidth": 0.8,
-        "grid.alpha": 0.30,
-        "grid.linewidth": 0.6,
-        "legend.frameon": False,
-    }
-)
+P = ParamSpec("P")
 
 _PALETTE = sns.color_palette("deep")
 # fixed colour per model — same colour everywhere it appears
-MODEL_COLORS: dict[str, tuple] = {
+MODEL_COLORS: dict[str, tuple[float, float, float]] = {
     "BKT": _PALETTE[0],
     "DKT": _PALETTE[2],
     "DKT+Optuna": _PALETTE[3],
@@ -54,31 +42,72 @@ MODEL_COLORS: dict[str, tuple] = {
 }
 ACCENT = _PALETTE[0]
 
+_STYLE_OVERRIDES: dict[str, Any] = {
+    "figure.dpi": 120,
+    "savefig.dpi": 150,
+    "savefig.bbox": "tight",
+    "font.family": "DejaVu Sans",
+    "axes.titleweight": "bold",
+    "axes.titlesize": 13,
+    "axes.labelsize": 11,
+    "axes.edgecolor": "#3A3A3A",
+    "axes.linewidth": 0.8,
+    "grid.alpha": 0.30,
+    "grid.linewidth": 0.6,
+    "legend.frameon": False,
+}
 
-def _color(name: str) -> tuple:
+
+def _theme() -> dict[RcKeyType, Any]:
+    """Matplotlib settings of the report style (seaborn whitegrid + overrides)."""
+    theme = {
+        **sns.plotting_context("notebook", font_scale=1.05),
+        **sns.axes_style("whitegrid"),
+        "axes.prop_cycle": cycler(color=_PALETTE),
+        **_STYLE_OVERRIDES,
+    }
+    # seaborn returns plain dicts; every key is a valid matplotlib rc parameter
+    return cast("dict[RcKeyType, Any]", theme)
+
+
+def _themed(plot: Callable[P, Path]) -> Callable[P, Path]:
+    """Draw and save the figure with the report style, then restore the settings."""
+
+    @functools.wraps(plot)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> Path:
+        with mpl.rc_context(_theme()):  # previous settings are restored on exit
+            return plot(*args, **kwargs)
+
+    return wrapper
+
+
+def _color(name: str) -> tuple[float, float, float]:
     return MODEL_COLORS.get(name, _PALETTE[7])
 
 
-def _figdir(out_dir: Path) -> Path:
-    d = resolve_path(out_dir)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def _output_path(out_dir: Path, name: str) -> Path:
+    directory = resolve_path(out_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / name
 
 
-def _save(fig, out_dir: Path, name: str) -> Path:
-    sns.despine(fig=fig)
+def _save(fig: Figure, out_dir: Path, name: str, *, despine: bool = True) -> Path:
+    if despine:
+        sns.despine(fig=fig)
     fig.tight_layout()
-    out = _figdir(out_dir) / name
+    out = _output_path(out_dir, name)
     fig.savefig(out)
-    plt.close(fig)
     return out
 
 
 # ── figures ─────────────────────────────────────────────────────────────────
 
 
-def plot_dataset_overview(long: pd.DataFrame, stats: dict, out_dir: Path) -> Path:
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
+@_themed
+def plot_dataset_overview(long: pd.DataFrame, stats: dict[str, Any], out_dir: Path) -> Path:
+    """Histograms of student sequence lengths and per-skill difficulty."""
+    fig = Figure(figsize=(11, 4.2))
+    axes = fig.subplots(1, 2)
     seq_lengths = long.groupby("user_id").size()
     sns.histplot(seq_lengths, bins=30, color=ACCENT, edgecolor="white", ax=axes[0])
     axes[0].set_title("Длина последовательностей студентов")
@@ -100,7 +129,9 @@ def plot_dataset_overview(long: pd.DataFrame, stats: dict, out_dir: Path) -> Pat
     return _save(fig, out_dir, "dataset_overview.png")
 
 
-def plot_model_comparison(results: dict[str, dict], out_dir: Path) -> Path:
+@_themed
+def plot_model_comparison(results: dict[str, dict[str, float]], out_dir: Path) -> Path:
+    """Grouped bars of AUC / accuracy / F1 per model on the test split."""
     tidy = pd.DataFrame(
         [
             {"Модель": m, "Метрика": metric, "value": results[m][key]}
@@ -108,7 +139,8 @@ def plot_model_comparison(results: dict[str, dict], out_dir: Path) -> Path:
             for metric, key in (("AUC", "auc"), ("Accuracy", "accuracy"), ("F1", "f1"))
         ]
     )
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig = Figure(figsize=(9, 5))
+    ax = fig.subplots()
     sns.barplot(data=tidy, x="Модель", y="value", hue="Метрика", palette="deep", ax=ax)
     for container in ax.containers:
         if isinstance(container, BarContainer):
@@ -120,8 +152,11 @@ def plot_model_comparison(results: dict[str, dict], out_dir: Path) -> Path:
     return _save(fig, out_dir, "model_comparison.png")
 
 
+@_themed
 def plot_roc(preds: dict[str, tuple[np.ndarray, np.ndarray]], out_dir: Path) -> Path:
-    fig, ax = plt.subplots(figsize=(6.5, 6))
+    """ROC curves of all models on the test split."""
+    fig = Figure(figsize=(6.5, 6))
+    ax = fig.subplots()
     for name, (yt, yp) in preds.items():
         if len(set(yt.tolist())) < 2:
             continue
@@ -135,9 +170,12 @@ def plot_roc(preds: dict[str, tuple[np.ndarray, np.ndarray]], out_dir: Path) -> 
     return _save(fig, out_dir, "roc_comparison.png")
 
 
+@_themed
 def plot_confusion(yt: np.ndarray, yp: np.ndarray, name: str, out_dir: Path) -> Path:
-    cm = confusion_matrix(yt, (yp > 0.5).astype(int))
-    fig, ax = plt.subplots(figsize=(5, 4.5))
+    """Confusion matrix of one model at the decision threshold."""
+    cm = confusion_matrix(yt, (yp > DECISION_THRESHOLD).astype(int))
+    fig = Figure(figsize=(5, 4.5))
+    ax = fig.subplots()
     sns.heatmap(
         cm,
         annot=True,
@@ -151,16 +189,15 @@ def plot_confusion(yt: np.ndarray, yp: np.ndarray, name: str, out_dir: Path) -> 
     ax.set_xlabel("предсказано")
     ax.set_ylabel("истинно")
     ax.set_title(f"Матрица ошибок — {name}")
-    fig.tight_layout()
-    out = _figdir(out_dir) / "confusion_matrix.png"
-    fig.savefig(out)
-    plt.close(fig)
-    return out
+    return _save(fig, out_dir, "confusion_matrix.png", despine=False)
 
 
+@_themed
 def plot_calibration(yt: np.ndarray, yp: np.ndarray, name: str, out_dir: Path) -> Path:
+    """Reliability diagram: predicted probability vs observed correctness."""
     frac_pos, mean_pred = calibration_curve(yt, yp, n_bins=10, strategy="quantile")
-    fig, ax = plt.subplots(figsize=(6, 5))
+    fig = Figure(figsize=(6, 5))
+    ax = fig.subplots()
     ax.plot([0, 1], [0, 1], "--", color="0.5", linewidth=1, label="идеальная калибровка")
     ax.plot(mean_pred, frac_pos, "o-", color=_color(name), linewidth=2, label=name)
     ax.set_xlabel("средняя предсказанная вероятность")
@@ -170,9 +207,12 @@ def plot_calibration(yt: np.ndarray, yp: np.ndarray, name: str, out_dir: Path) -
     return _save(fig, out_dir, "calibration.png")
 
 
+@_themed
 def plot_feature_importance(names: list[str], importances: np.ndarray, out_dir: Path) -> Path:
+    """Feature importances of the tabular AutoML model."""
     df = pd.DataFrame({"feature": names, "importance": importances}).sort_values("importance")
-    fig, ax = plt.subplots(figsize=(8, 5))
+    fig = Figure(figsize=(8, 5))
+    ax = fig.subplots()
     sns.barplot(data=df, x="importance", y="feature", color=ACCENT, ax=ax)
     ax.set_title("Важность признаков (AutoML / LightGBM)")
     ax.set_xlabel("важность")
@@ -180,8 +220,11 @@ def plot_feature_importance(names: list[str], importances: np.ndarray, out_dir: 
     return _save(fig, out_dir, "feature_importance.png")
 
 
+@_themed
 def plot_dkt_loss(losses: list[float], out_dir: Path) -> Path:
-    fig, ax = plt.subplots(figsize=(7, 4.5))
+    """Training loss of DKT per epoch."""
+    fig = Figure(figsize=(7, 4.5))
+    ax = fig.subplots()
     ax.plot(range(1, len(losses) + 1), losses, "o-", color=MODEL_COLORS["DKT"], linewidth=2)
     ax.set_xlabel("эпоха")
     ax.set_ylabel("train loss (BCE)")

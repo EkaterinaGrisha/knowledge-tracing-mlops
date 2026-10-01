@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,15 +37,16 @@ from .etl.load import load
 from .etl.transform import ProcessedData, transform
 from .evaluation import visualize as viz
 from .evaluation.metrics import compute_metrics
+from .logging_setup import configure_logging
 from .models.base import KnowledgeTracingModel, Predictions
 from .models.registry import build_models
 from .monitoring.data_quality import enforce_quality_gate, quality_report
 from .monitoring.drift import drift_report
 from .monitoring.resources import ResourceMonitor
 from .tracking import configure_tracking
-from .utils import get_logger
 
-LOG = get_logger()
+# Explicit name: this module also runs as __main__ (python -m ...).
+LOG = logging.getLogger("knowledge_tracing.pipeline")
 
 
 @dataclass(eq=False)
@@ -264,6 +266,7 @@ def main() -> None:
     ap.add_argument("--data-source", choices=["sample", "full"], default="sample")
     ap.add_argument("--quick", action="store_true", help="minimal budgets for CI smoke runs")
     args = ap.parse_args()
+    configure_logging()
     run(args.config, args.data_source, quick=args.quick)
 
 
