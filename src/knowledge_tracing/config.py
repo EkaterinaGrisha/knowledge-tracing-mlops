@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, PositiveFloat, PositiveInt, model_validator
@@ -121,17 +121,28 @@ class MonitoringConfig(_Section):
 
 
 class MLflowConfig(_Section):
-    """Experiment tracking."""
+    """Experiment tracking and model registry."""
 
     experiment_name: str = Field(min_length=1)
     tracking_uri: str = Field(min_length=1)
+    artifact_location: Path
+
+
+class ServingConfig(_Section):
+    """Which model is packaged for inference and how it is registered."""
+
+    model: Literal["DKT", "DKT+Optuna"]
+    registered_model_name: str = Field(min_length=1)
+    # quality gate: a model below this test AUC is not registered
+    min_test_auc: float = Field(ge=0, le=1)
 
 
 class OutputConfig(_Section):
-    """Where a run writes its reports."""
+    """Where a run writes its reports and the packaged model."""
 
     figures_dir: Path
     metrics_path: Path
+    model_dir: Path
 
 
 class Config(_Section):
@@ -142,6 +153,7 @@ class Config(_Section):
     models: ModelsConfig
     monitoring: MonitoringConfig
     mlflow: MLflowConfig
+    serving: ServingConfig
     output: OutputConfig
 
 

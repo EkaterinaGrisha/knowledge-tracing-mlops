@@ -1,9 +1,15 @@
 import json
+import shutil
+from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
+from mlflow.tracking import MlflowClient
 
 from knowledge_tracing.cli import EXIT_DATA_QUALITY, EXIT_INVALID_CONFIG, main
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_version(capsys):
@@ -38,7 +44,7 @@ def test_failed_quality_gate_stops_before_training(project_dir, monkeypatch):
 
 
 @pytest.mark.slow
-def test_train_end_to_end(project_dir):
+def test_train_register_predict_promote(project_dir):
     tiny = project_dir / "config" / "tiny.yaml"
     tiny.write_text(
         yaml.safe_dump(
@@ -48,7 +54,8 @@ def test_train_end_to_end(project_dir):
                     "dkt": {"epochs": 1},
                     "dkt_optuna": {"n_trials": 1, "epochs_per_trial": 1},
                     "automl_flaml": {"time_budget_s": 3},
-                }
+                },
+                "serving": {"min_test_auc": 0.5},
             }
         ),
         encoding="utf-8",
@@ -57,5 +64,25 @@ def test_train_end_to_end(project_dir):
 
     metrics = json.loads((project_dir / "reports" / "metrics.json").read_text(encoding="utf-8"))
     assert set(metrics["results"]) == {"BKT", "DKT", "DKT+Optuna", "AutoML"}
-    assert metrics["best_model"] in metrics["results"]
     assert len(list((project_dir / "reports" / "figures").glob("*.png"))) == 7
+    serving = metrics["serving"]
+    assert serving["registered"] is True
+    assert serving["alias"] == "challenger"
+    assert (project_dir / "artifacts" / "model" / "model.pt").exists()
+
+    # the packaged model and the registered version give the same predictions
+    shutil.copy(REPO_ROOT / "examples" / "history.csv", project_dir / "history.csv")
+    local_args = ["predict", "--input", "history.csv", "--output", "out/local.csv"]
+    assert main(local_args) == 0
+    registry_args = ["predict", "--model", "models:/kt-dkt@challenger", "--input", "history.csv"]
+    assert main([*registry_args, "--output", "out/registry.csv"]) == 0
+    local = pd.read_csv(project_dir / "out" / "local.csv")
+    assert list(local.columns) == ["user_id", "skill_id", "p_correct"]
+    assert local["p_correct"].between(0, 1).all()
+    pd.testing.assert_frame_equal(pd.read_csv(project_dir / "out" / "registry.csv"), local)
+
+    # approval step: the challenger becomes the champion
+    assert main(["promote"]) == 0
+    client = MlflowClient()
+    champion = client.get_model_version_by_alias("kt-dkt", "champion")
+    assert str(champion.version) == serving["version"]

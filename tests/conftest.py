@@ -1,3 +1,4 @@
+import logging
 import os
 import shutil
 from pathlib import Path
@@ -26,6 +27,15 @@ def project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setenv(PROJECT_ROOT_ENV, str(tmp_path))
     monkeypatch.delenv("MLFLOW_TRACKING_URI", raising=False)
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def _reset_package_logging():
+    """Undo configure_logging() of CLI tests so caplog sees package records."""
+    yield
+    logger = logging.getLogger("knowledge_tracing")
+    logger.handlers.clear()
+    logger.propagate = True
 
 
 @pytest.fixture(scope="session")

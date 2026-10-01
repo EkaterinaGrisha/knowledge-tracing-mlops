@@ -46,8 +46,19 @@ monitoring:
 
 mlflow:
   experiment_name: "knowledge-tracing-automl"
-  tracking_uri: "file:./mlruns"
+  # SQLite store for runs and the Model Registry: MLflow 3 has put the plain
+  # ./mlruns file store into maintenance mode. MLFLOW_TRACKING_URI overrides it.
+  tracking_uri: "sqlite:///mlruns/mlflow.db"
+  artifact_location: "mlruns/artifacts"
+
+serving:
+  # Model packaged for inference (kt predict) and registered in the MLflow registry.
+  model: "DKT+Optuna"
+  registered_model_name: "kt-dkt"
+  # Quality gate: a new version is registered (alias "challenger") only above this test AUC.
+  min_test_auc: 0.75
 
 output:
   figures_dir: "reports/figures"
   metrics_path: "reports/metrics.json"
+  model_dir: "artifacts/model"

@@ -37,7 +37,6 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     MPLBACKEND=Agg \
-    MLFLOW_ALLOW_FILE_STORE=true \
     VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:${PATH}"
 
@@ -48,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Run as a non-root user (security: limits blast radius if the container is
 # compromised). The user owns /app and the code so the pipeline can write
-# reports/ and mlruns/; the virtualenv stays root-owned and read-only.
+# reports/, artifacts/ and mlruns/; the virtualenv stays root-owned and read-only.
 RUN useradd --create-home --uid 1000 mluser \
     && mkdir /app && chown mluser:mluser /app
 WORKDIR /app

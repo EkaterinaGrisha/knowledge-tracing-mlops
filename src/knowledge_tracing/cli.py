@@ -1,9 +1,11 @@
 """Command-line interface: ``kt <command>`` (also ``python -m knowledge_tracing``).
 
 Commands:
-    kt etl     extract, transform and load the data
-    kt train   run the whole pipeline: ETL, quality gate, training, evaluation,
-               drift monitoring, MLflow logging and reports
+    kt etl       extract, transform and load the data
+    kt train     run the whole pipeline: ETL, quality gate, training, evaluation,
+                 drift monitoring, MLflow logging, reports and the serving model
+    kt predict   P(correct) per skill for students' answer histories
+    kt promote   approve the registered "challenger" as the "champion"
 
 Heavy libraries are imported inside the commands, after the platform runtime
 settings are applied, so ``kt --help`` is instant.
@@ -13,13 +15,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections.abc import Sequence
 
 from pydantic import ValidationError
 
 from . import __version__
 from .config import DEFAULT_CONFIG_PATH, load_config, quick_overlay_path
-from .errors import DataQualityError
+from .errors import DataQualityError, PromotionError
 from .logging_setup import configure_logging
 from .runtime import configure_runtime
 
@@ -28,6 +31,7 @@ LOG = logging.getLogger(__name__)
 EXIT_OK = 0
 EXIT_INVALID_CONFIG = 2
 EXIT_DATA_QUALITY = 3
+EXIT_PROMOTION_REJECTED = 4
 
 
 def _add_data_args(parser: argparse.ArgumentParser) -> None:
@@ -57,6 +61,40 @@ def _train(args: argparse.Namespace) -> int:
     overlays = [quick_overlay_path(args.config)] if args.quick else []
     overlays += args.override
     run_pipeline(load_config(args.config, overlays), args.data_source, quick=args.quick)
+    return EXIT_OK
+
+
+def _predict(args: argparse.Namespace) -> int:
+    import pandas as pd
+
+    from .config import resolve_path
+    from .inference import load_model
+    from .tracking import use_tracking_store
+
+    if not resolve_path(args.model).is_dir():  # an MLflow URI: use the configured store
+        use_tracking_store(load_config(args.config).mlflow)
+    predictions = load_model(args.model).predict(pd.read_csv(resolve_path(args.input)))
+    if args.output:
+        output = resolve_path(args.output)
+        output.parent.mkdir(parents=True, exist_ok=True)
+        predictions.to_csv(output, index=False)
+        LOG.info("Wrote %d predictions to %s", len(predictions), output)
+    else:
+        predictions.to_csv(sys.stdout, index=False)
+    return EXIT_OK
+
+
+def _promote(args: argparse.Namespace) -> int:
+    from .tracking import promote, use_tracking_store
+
+    cfg = load_config(args.config)
+    use_tracking_store(cfg.mlflow)
+    promote(
+        cfg.serving.registered_model_name,
+        source=args.source,
+        target=args.target,
+        force=args.force,
+    )
     return EXIT_OK
 
 
@@ -101,6 +139,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="extra configuration overlay merged on top (repeatable)",
     )
     train.set_defaults(handler=_train)
+
+    predict = commands.add_parser(
+        "predict", help="P(correct) on the next attempt of every skill, per student"
+    )
+    predict.add_argument(
+        "--model",
+        default="artifacts/model",
+        help="packaged model directory or MLflow model URI, e.g. models:/kt-dkt@champion "
+        "(default: %(default)s)",
+    )
+    predict.add_argument(
+        "--input",
+        required=True,
+        help="CSV with answered exercises: user_id, order_idx, skill_id, correct",
+    )
+    predict.add_argument("--output", help="CSV file for the predictions (default: stdout)")
+    predict.add_argument(
+        "--config",
+        default=str(DEFAULT_CONFIG_PATH),
+        help="configuration with the MLflow store, for model URIs (default: %(default)s)",
+    )
+    predict.set_defaults(handler=_predict)
+
+    promote = commands.add_parser(
+        "promote", help="point the champion alias at the approved challenger version"
+    )
+    promote.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
+    promote.add_argument("--source", default="challenger", help="alias to promote from")
+    promote.add_argument("--target", default="champion", help="alias to promote to")
+    promote.add_argument(
+        "--force", action="store_true", help="promote even if the test AUC is lower"
+    )
+    promote.set_defaults(handler=_promote)
     return parser
 
 
@@ -117,4 +188,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     except DataQualityError as exc:
         LOG.error("Run stopped by the data-quality gate: %s", exc)
         return EXIT_DATA_QUALITY
+    except PromotionError as exc:
+        LOG.error("Promotion rejected: %s", exc)
+        return EXIT_PROMOTION_REJECTED
     return exit_code

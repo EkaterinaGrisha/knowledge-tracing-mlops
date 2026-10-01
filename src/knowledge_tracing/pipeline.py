@@ -2,7 +2,8 @@
 
 Stages: ETL (extract/transform/load) -> data-quality gate -> train and evaluate
 every model (BKT, DKT, DKT+Optuna, FLAML AutoML) -> drift monitoring ->
-MLflow logging -> figures -> metrics.json.
+MLflow logging -> figures -> packaged serving model (registered as the
+"challenger" if it passes the quality gate) -> metrics.json.
 
 Run from the command line:
     kt train --data-source sample          # fast, offline (CI)
@@ -16,11 +17,14 @@ import json
 import logging
 import math
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import mlflow
+import pandas as pd
 
+from . import __version__
 from .config import Config, MonitoringConfig, resolve_path
 from .etl.datasets import TrainingData, build_training_data
 from .etl.extract import DataSource
@@ -28,12 +32,14 @@ from .etl.run import run_etl
 from .etl.transform import ProcessedData
 from .evaluation import visualize as viz
 from .evaluation.metrics import compute_metrics
+from .inference import DKTPredictor, log_predictor
 from .models.base import KnowledgeTracingModel, Predictions
+from .models.dkt import DKTModel
 from .models.registry import build_models
 from .monitoring.data_quality import enforce_quality_gate, quality_report
 from .monitoring.drift import drift_report
 from .monitoring.resources import ResourceMonitor
-from .tracking import configure_tracking
+from .tracking import CHALLENGER, TEST_AUC_TAG, configure_tracking, mark_challenger
 
 LOG = logging.getLogger(__name__)
 
@@ -171,6 +177,91 @@ def build_figures(
     return figures
 
 
+def _history_example(
+    processed: ProcessedData, skill_ids: list[int], n_rows: int = 10
+) -> pd.DataFrame:
+    """A few test interactions in the serving input format (original skill ids)."""
+    test = processed.long[processed.long["split"] == "test"]
+    rows = test[test["user_id"] == test["user_id"].iloc[0]].head(n_rows)
+    return pd.DataFrame(
+        {
+            "user_id": rows["user_id"].to_numpy(),
+            "order_idx": rows["order_idx"].to_numpy(),
+            "skill_id": [skill_ids[i] for i in rows["skill_idx"]],
+            "correct": rows["correct"].to_numpy(),
+        }
+    )
+
+
+def package_model(
+    cfg: Config,
+    runs: dict[str, ModelRun],
+    processed: ProcessedData,
+    data_source: DataSource,
+    quick: bool,
+) -> dict[str, Any]:
+    """Save the serving model and register it in MLflow if it passes the quality gate.
+
+    The model configured in ``serving.model`` is always written to
+    ``output.model_dir`` and logged to the run; it becomes a new registry version
+    with the ``challenger`` alias only if its test AUC reaches
+    ``serving.min_test_auc``. Promotion to ``champion`` is a separate,
+    approved step (``kt promote``).
+    """
+    run = runs[cfg.serving.model]
+    if not isinstance(run.model, DKTModel):
+        raise TypeError(f"serving.model must be a DKT model, got {run.model.name}")
+    test_auc = run.metrics["auc"]
+    active = mlflow.active_run()
+    predictor = DKTPredictor.from_model(
+        run.model,
+        processed.skill_remap,
+        metadata={
+            "model": run.model.name,
+            "package_version": __version__,
+            "data_source": data_source,
+            "quick": quick,
+            "test_metrics": run.metrics,
+            "trained_at": datetime.now(UTC).isoformat(timespec="seconds"),
+            "mlflow_run_id": active.info.run_id if active else None,
+        },
+    )
+    model_dir = predictor.save(resolve_path(cfg.output.model_dir))
+
+    name = cfg.serving.registered_model_name
+    passed = not math.isnan(test_auc) and test_auc >= cfg.serving.min_test_auc
+    info = log_predictor(
+        model_dir, _history_example(processed, predictor.skill_ids), name if passed else None
+    )
+    serving: dict[str, Any] = {
+        "model": run.model.name,
+        "path": str(cfg.output.model_dir),
+        "test_auc": test_auc,
+        "min_test_auc": cfg.serving.min_test_auc,
+        "registered": passed,
+    }
+    if passed:
+        version = str(info.registered_model_version)
+        mark_challenger(
+            name,
+            version,
+            {TEST_AUC_TAG: f"{test_auc:.6f}", "data_source": data_source, "quick": str(quick)},
+        )
+        serving.update(registered_model=name, version=version, alias=CHALLENGER)
+        LOG.info(
+            "Registered %s version %s as '%s' (test AUC %.4f)", name, version, CHALLENGER, test_auc
+        )
+    else:
+        LOG.warning(
+            "%s test AUC %.4f is below serving.min_test_auc %.2f: saved to %s, not registered",
+            run.model.name,
+            test_auc,
+            cfg.serving.min_test_auc,
+            cfg.output.model_dir,
+        )
+    return serving
+
+
 def write_summary(summary: dict[str, Any], metrics_path: Path) -> Path:
     """Write the run summary as JSON and return its location."""
     path = resolve_path(metrics_path)
@@ -207,6 +298,7 @@ def run_pipeline(cfg: Config, data_source: DataSource, *, quick: bool = False) -
         best_name = select_best(runs)
         for figure in build_figures(processed, runs, best_name, cfg.output.figures_dir):
             mlflow.log_artifact(str(figure), artifact_path="figures")
+        serving = package_model(cfg, runs, processed, data_source, quick)
 
         summary: dict[str, Any] = {
             "data_source": data_source,
@@ -216,6 +308,7 @@ def run_pipeline(cfg: Config, data_source: DataSource, *, quick: bool = False) -
             "best_model": best_name,
             "drift": drift,
             "data_quality_passed": dq["passed"],
+            "serving": serving,
         }
         for run in runs.values():
             summary.update(run.model.report())

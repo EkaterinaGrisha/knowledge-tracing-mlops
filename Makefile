@@ -1,4 +1,4 @@
-.PHONY: install lint format typecheck test etl train train-quick train-full present mlflow docker docker-run clean
+.PHONY: install lint format typecheck test etl train train-quick train-full predict promote present mlflow docker docker-run clean
 
 # Every command runs inside the project virtualenv (.venv/) managed by Poetry.
 RUN ?= poetry run
@@ -39,18 +39,26 @@ train-quick:
 train-full:
 	$(RUN) kt train --data-source full
 
+# Next-attempt P(correct) per skill for the example students, with the local model.
+predict:
+	$(RUN) kt predict --model artifacts/model --input examples/history.csv
+
+# Approval step: the registered "challenger" becomes the "champion".
+promote:
+	$(RUN) kt promote
+
 present:
 	poetry install --with presentation
 	$(RUN) python scripts/build_deck.py
 
 mlflow:
-	MLFLOW_ALLOW_FILE_STORE=true $(RUN) mlflow ui --backend-store-uri file:./mlruns --port 5000
+	$(RUN) mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db --port 5000
 
 docker:
 	docker build -t kt-pipeline:latest .
 
 docker-run:
-	docker run --rm -v $$(pwd)/reports:/app/reports -v $$(pwd)/mlruns:/app/mlruns kt-pipeline:latest
+	docker run --rm -v $$(pwd)/reports:/app/reports -v $$(pwd)/artifacts:/app/artifacts -v $$(pwd)/mlruns:/app/mlruns kt-pipeline:latest
 
 clean:
-	rm -rf data/raw/* data/processed/* mlruns/* reports/figures/* reports/metrics.json
+	rm -rf data/raw/* data/processed/* mlruns/* artifacts/* reports/figures/* reports/metrics.json
