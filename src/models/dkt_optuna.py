@@ -8,8 +8,6 @@ configuration and report it on the test split.
 
 from __future__ import annotations
 
-from typing import List
-
 import optuna
 
 from ..utils import get_logger
@@ -20,8 +18,8 @@ optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 def search_dkt(
-    train_traces: List[StudentTrace],
-    val_traces: List[StudentTrace],
+    train_traces: list[StudentTrace],
+    val_traces: list[StudentTrace],
     n_concepts: int,
     *,
     n_trials: int = 12,
@@ -55,4 +53,8 @@ def search_dkt(
     study = optuna.create_study(direction="maximize", sampler=sampler)
     study.optimize(objective, n_trials=n_trials, show_progress_bar=False)
     LOG.info("Optuna best val AUC=%.4f params=%s", study.best_value, study.best_params)
-    return {"best_params": study.best_params, "best_val_auc": float(study.best_value), "study": study}
+    return {
+        "best_params": study.best_params,
+        "best_val_auc": float(study.best_value),
+        "study": study,
+    }

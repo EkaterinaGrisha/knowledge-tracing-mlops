@@ -26,7 +26,7 @@ def load(processed: ProcessedData, cfg: dict) -> dict[str, Path]:
 
     processed.features.to_parquet(features_path, index=False)
     processed.long.to_parquet(long_path, index=False)
-    with open(stats_path, "w", encoding="utf-8") as fh:
+    with stats_path.open("w", encoding="utf-8") as fh:
         json.dump(processed.stats, fh, ensure_ascii=False, indent=2)
 
     LOG.info("Loaded processed artifacts into %s", out_dir)

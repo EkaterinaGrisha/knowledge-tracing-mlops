@@ -36,8 +36,8 @@ TARGET = "correct"
 
 @dataclass
 class ProcessedData:
-    features: pd.DataFrame              # feature frame + correct + split + user_id
-    long: pd.DataFrame                  # cleaned long frame (user_id, order_idx, skill_idx, correct, split)
+    features: pd.DataFrame  # feature frame + correct + split + user_id
+    long: pd.DataFrame  # cleaned long frame (user_id, order_idx, skill_idx, correct, split)
     feature_cols: list[str]
     n_skills: int
     skill_remap: dict[int, int]
@@ -48,13 +48,15 @@ class ProcessedData:
         return sub[self.feature_cols].copy(), sub[TARGET].copy()
 
 
-def _assign_splits(user_ids: np.ndarray, val_frac: float, test_frac: float, seed: int) -> dict[int, str]:
+def _assign_splits(
+    user_ids: np.ndarray, val_frac: float, test_frac: float, seed: int
+) -> dict[int, str]:
     rng = np.random.default_rng(seed)
-    users = np.array(sorted(set(int(u) for u in user_ids)))
+    users = np.array(sorted({int(u) for u in user_ids}))
     rng.shuffle(users)
     n = len(users)
-    n_test = int(round(n * test_frac))
-    n_val = int(round(n * val_frac))
+    n_test = round(n * test_frac)
+    n_val = round(n * val_frac)
     split_of: dict[int, str] = {}
     for u in users[:n_test]:
         split_of[int(u)] = "test"
@@ -96,7 +98,9 @@ def transform(df_raw: pd.DataFrame, cfg: dict) -> ProcessedData:
     df["order_idx"] = df.groupby("user_id").cumcount()
 
     # --- split by student ---
-    split_of = _assign_splits(df["user_id"].to_numpy(), data_cfg["val_frac"], data_cfg["test_frac"], seed)
+    split_of = _assign_splits(
+        df["user_id"].to_numpy(), data_cfg["val_frac"], data_cfg["test_frac"], seed
+    )
     df["split"] = df["user_id"].map(split_of)
 
     # --- causal feature engineering ---
@@ -106,14 +110,18 @@ def transform(df_raw: pd.DataFrame, cfg: dict) -> ProcessedData:
     df["user_prior_attempts"] = g_user.cumcount()
     user_cum = g_user["correct"].cumsum() - df["correct"]
     df["user_prior_correct_rate"] = np.where(
-        df["user_prior_attempts"] > 0, user_cum / df["user_prior_attempts"].clip(lower=1), global_mean
+        df["user_prior_attempts"] > 0,
+        user_cum / df["user_prior_attempts"].clip(lower=1),
+        global_mean,
     )
 
     g_us = df.groupby(["user_id", "skill_idx"])
     df["skill_prior_attempts"] = g_us.cumcount()
     skill_cum = g_us["correct"].cumsum() - df["correct"]
     df["skill_prior_correct_rate"] = np.where(
-        df["skill_prior_attempts"] > 0, skill_cum / df["skill_prior_attempts"].clip(lower=1), global_mean
+        df["skill_prior_attempts"] > 0,
+        skill_cum / df["skill_prior_attempts"].clip(lower=1),
+        global_mean,
     )
 
     df["recent3_correct_rate"] = (
@@ -126,22 +134,20 @@ def transform(df_raw: pd.DataFrame, cfg: dict) -> ProcessedData:
     skill_diff = df.loc[df["split"] == "train"].groupby("skill_idx")["correct"].mean()
     df["skill_difficulty"] = (1.0 - df["skill_idx"].map(skill_diff)).fillna(1.0 - global_mean)
 
-    features = df[["user_id", "split", TARGET] + FEATURE_COLS].copy()
+    features = df[["user_id", "split", TARGET, *FEATURE_COLS]].copy()
     # skill_idx kept as int so every AutoML estimator (lgbm/xgboost/rf) handles it;
     # the real per-skill signal is carried by skill_difficulty + skill_prior_correct_rate.
     features["skill_idx"] = features["skill_idx"].astype(int)
 
     stats = {
-        "n_interactions": int(len(df)),
+        "n_interactions": len(df),
         "n_students": int(df["user_id"].nunique()),
         "n_skills": int(n_skills),
         "global_correct_rate": round(global_mean, 4),
         "split_students": {
             s: int(df.loc[df["split"] == s, "user_id"].nunique()) for s in ("train", "val", "test")
         },
-        "split_interactions": {
-            s: int((df["split"] == s).sum()) for s in ("train", "val", "test")
-        },
+        "split_interactions": {s: int((df["split"] == s).sum()) for s in ("train", "val", "test")},
     }
     LOG.info("Transform complete: %s", stats)
 
@@ -166,7 +172,8 @@ def build_sequences(long: pd.DataFrame, split: str) -> list[dict]:
     for uid, grp in sub.groupby("user_id"):
         out.append(
             {
-                "user_id": int(uid),
+                # pandas-stubs types groupby keys as a generic scalar; user_id is an int column.
+                "user_id": int(uid),  # type: ignore[arg-type]
                 "skills": grp["skill_idx"].to_numpy(dtype=np.int64),
                 "correct": grp["correct"].to_numpy(dtype=np.int64),
             }
