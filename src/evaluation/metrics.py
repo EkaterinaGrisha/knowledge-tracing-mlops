@@ -27,5 +27,5 @@ def compute_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict[str, f
         "recall": float(recall_score(yt, yhat, zero_division=0)),
         "rmse": float(np.sqrt(mean_squared_error(yt, yp))),
         "log_loss": float(log_loss(yt, yp)) if has_both else float("nan"),
-        "n": int(len(yt)),
+        "n": len(yt),
     }

@@ -9,7 +9,6 @@ evaluate one-step-ahead correctness prediction on held-out students.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple
 
 import numpy as np
 from sklearn.metrics import accuracy_score, mean_squared_error, roc_auc_score
@@ -22,20 +21,20 @@ class BktParams:
     p_slip: float
     p_guess: float
 
-    def as_tuple(self) -> Tuple[float, float, float, float]:
+    def as_tuple(self) -> tuple[float, float, float, float]:
         return (self.p_init, self.p_learn, self.p_slip, self.p_guess)
 
 
 DEFAULT_PARAMS = BktParams(0.25, 0.15, 0.10, 0.20)
 
 
-def _emission(y: int, p: BktParams) -> Tuple[float, float]:
+def _emission(y: int, p: BktParams) -> tuple[float, float]:
     if y == 1:
         return p.p_guess, 1.0 - p.p_slip
     return 1.0 - p.p_guess, p.p_slip
 
 
-def forward_alpha(seq: List[int], p: BktParams) -> Tuple[np.ndarray, float]:
+def forward_alpha(seq: list[int], p: BktParams) -> tuple[np.ndarray, float]:
     T = len(seq)
     alpha = np.zeros((T, 2))
     log_lik = 0.0
@@ -48,10 +47,10 @@ def forward_alpha(seq: List[int], p: BktParams) -> Tuple[np.ndarray, float]:
         log_lik += np.log(c)
     for t in range(1, T):
         e0, e1 = _emission(seq[t], p)
-        pred_L0 = alpha[t - 1, 0] * (1.0 - p.p_learn)
-        pred_L1 = alpha[t - 1, 0] * p.p_learn + alpha[t - 1, 1] * 1.0
-        alpha[t, 0] = pred_L0 * e0
-        alpha[t, 1] = pred_L1 * e1
+        prior_unknown = alpha[t - 1, 0] * (1.0 - p.p_learn)
+        prior_known = alpha[t - 1, 0] * p.p_learn + alpha[t - 1, 1] * 1.0
+        alpha[t, 0] = prior_unknown * e0
+        alpha[t, 1] = prior_known * e1
         c = alpha[t].sum()
         if c > 0:
             alpha[t] /= c
@@ -59,7 +58,7 @@ def forward_alpha(seq: List[int], p: BktParams) -> Tuple[np.ndarray, float]:
     return alpha, log_lik
 
 
-def _backward_beta(seq: List[int], p: BktParams) -> np.ndarray:
+def _backward_beta(seq: list[int], p: BktParams) -> np.ndarray:
     T = len(seq)
     beta = np.ones((T, 2))
     for t in range(T - 2, -1, -1):
@@ -72,7 +71,7 @@ def _backward_beta(seq: List[int], p: BktParams) -> np.ndarray:
     return beta
 
 
-def fit_em(seqs: List[List[int]], n_iter: int = 30, init: BktParams = DEFAULT_PARAMS) -> BktParams:
+def fit_em(seqs: list[list[int]], n_iter: int = 30, init: BktParams = DEFAULT_PARAMS) -> BktParams:
     p = BktParams(*init.as_tuple())
     last_ll = -np.inf
     for _ in range(n_iter):
@@ -123,46 +122,48 @@ def fit_em(seqs: List[List[int]], n_iter: int = 30, init: BktParams = DEFAULT_PA
     return p
 
 
-def predict_next_correct(seq: List[int], p: BktParams) -> List[float]:
+def predict_next_correct(seq: list[int], p: BktParams) -> list[float]:
     T = len(seq)
     if T == 0:
         return []
-    preds: List[float] = []
-    p_L1_pre = p.p_init
-    preds.append(p_L1_pre * (1.0 - p.p_slip) + (1.0 - p_L1_pre) * p.p_guess)
-    L0 = 1.0 - p.p_init
-    L1 = p.p_init
+    preds: list[float] = []
+    p_known_init = p.p_init
+    preds.append(p_known_init * (1.0 - p.p_slip) + (1.0 - p_known_init) * p.p_guess)
+    p_unknown = 1.0 - p.p_init
+    p_known = p.p_init
     for t in range(T - 1):
         e0, e1 = _emission(seq[t], p)
-        post0 = L0 * e0
-        post1 = L1 * e1
+        post0 = p_unknown * e0
+        post1 = p_known * e1
         s = post0 + post1 + 1e-12
         post0 /= s
         post1 /= s
-        L0 = post0 * (1.0 - p.p_learn)
-        L1 = post0 * p.p_learn + post1 * 1.0
-        preds.append(L1 * (1.0 - p.p_slip) + L0 * p.p_guess)
+        p_unknown = post0 * (1.0 - p.p_learn)
+        p_known = post0 * p.p_learn + post1 * 1.0
+        preds.append(p_known * (1.0 - p.p_slip) + p_unknown * p.p_guess)
     return preds
 
 
 # ── ASSISTments adapter: per-skill fit + evaluation ────────────────────────
 
 
-def _per_skill_subsequences(sequences: List[dict], n_skills: int) -> List[List[List[int]]]:
+def _per_skill_subsequences(sequences: list[dict], n_skills: int) -> list[list[list[int]]]:
     """Group each student's interactions by skill, preserving within-skill order."""
-    by_skill: List[List[List[int]]] = [[] for _ in range(n_skills)]
+    by_skill: list[list[list[int]]] = [[] for _ in range(n_skills)]
     for s in sequences:
         skills = s["skills"]
         correct = s["correct"]
         buckets: dict[int, list[int]] = {}
-        for k, y in zip(skills, correct):
+        for k, y in zip(skills, correct, strict=True):
             buckets.setdefault(int(k), []).append(int(y))
         for k, seq in buckets.items():
             by_skill[k].append(seq)
     return by_skill
 
 
-def fit_bkt_per_skill(train_sequences: List[dict], n_skills: int, em_iters: int = 30) -> dict[int, BktParams]:
+def fit_bkt_per_skill(
+    train_sequences: list[dict], n_skills: int, em_iters: int = 30
+) -> dict[int, BktParams]:
     by_skill = _per_skill_subsequences(train_sequences, n_skills)
     params: dict[int, BktParams] = {}
     for k in range(n_skills):
@@ -172,8 +173,8 @@ def fit_bkt_per_skill(train_sequences: List[dict], n_skills: int, em_iters: int 
 
 
 def evaluate_bkt(
-    params_by_skill: dict[int, BktParams], eval_sequences: List[dict], n_skills: int
-) -> Tuple[float, float, float, np.ndarray, np.ndarray]:
+    params_by_skill: dict[int, BktParams], eval_sequences: list[dict], n_skills: int
+) -> tuple[float, float, float, np.ndarray, np.ndarray]:
     by_skill = _per_skill_subsequences(eval_sequences, n_skills)
     y_true: list[int] = []
     y_pred: list[float] = []

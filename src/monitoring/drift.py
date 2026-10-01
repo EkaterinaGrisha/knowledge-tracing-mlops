@@ -42,7 +42,9 @@ def drift_report(
             continue
         psi = _psi(ref, cur)
         ks_stat, ks_p = stats.ks_2samp(ref, cur)
-        status = "stable" if psi < warn else "moderate_drift" if psi < alert else "significant_drift"
+        status = (
+            "stable" if psi < warn else "moderate_drift" if psi < alert else "significant_drift"
+        )
         if status == "significant_drift":
             n_alert += 1
         features[col] = {

@@ -570,6 +570,7 @@ code("""# Раскомментируйте для полного прогона 
 # Сериализация в .ipynb
 # ---------------------------------------------------------------------------
 
+
 def _to_source(text: str) -> list[str]:
     """Convert a string to the per-line list format used by .ipynb."""
     lines = text.splitlines(keepends=True)
@@ -610,7 +611,7 @@ def main() -> None:
     out = Path(__file__).resolve().parents[1] / "notebooks" / "train.ipynb"
     out.parent.mkdir(parents=True, exist_ok=True)
     nb = build_notebook()
-    with open(out, "w", encoding="utf-8") as fh:
+    with out.open("w", encoding="utf-8") as fh:
         json.dump(nb, fh, ensure_ascii=False, indent=1)
     print(f"Notebook written: {out} ({len(nb['cells'])} cells)")
 
