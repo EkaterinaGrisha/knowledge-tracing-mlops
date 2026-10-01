@@ -718,10 +718,37 @@ pytest                   # полный набор
 ```
 
 На текущей среде быстрый прогон проходит 15 тестов за несколько секунд; полный
-прогон занимает около минуты. CI запускает быстрый прогон на каждый push.
+прогон занимает около минуты. CI запускает полный набор на каждый push, а
+локальный git-хук `pre-push` — быстрый прогон перед каждой отправкой.
 
-Линтер **ruff** настроен с правилами `E, F, I, W` и длиной строки 100
-символов; проверка запускается командой `make lint`.
+### 11.1 Статический анализ и pre-commit
+
+Качество кода проверяется автоматически — локально git-хуками
+[pre-commit](https://pre-commit.com/) и повторно в CI теми же проверками.
+Конфигурация хуков — `.pre-commit-config.yaml`, настройки инструментов —
+`pyproject.toml`.
+
+| Инструмент | Что проверяет |
+|---|---|
+| **ruff** (линтер) | pycodestyle, pyflakes, сортировка импортов, pyupgrade, bugbear, simplify, comprehensions, pathlib, pep8-naming, bandit (безопасность), запрет `print` в коде пакета, правила NumPy и Ruff |
+| **ruff format** | единый стиль форматирования (замена black), длина строки 100 |
+| **mypy** | статическая проверка типов `src/` и `tests/`; запускается внутри `.venv`, поэтому видит точные версии torch, pandas и их аннотации |
+| **pre-commit-hooks** | лишние пробелы, перевод строки в конце файла, синтаксис YAML/TOML/JSON, маркеры merge-конфликтов, большие файлы (> 1 MB), приватные ключи, забытые отладочные вызовы; запрет коммитов напрямую в `main` |
+| **nbstripout** | удаляет выводы ячеек из ноутбуков перед коммитом — результаты хранятся в `reports/` и MLflow, а не в git-истории ноутбука |
+| **poetry check --lock** | `poetry.lock` соответствует `pyproject.toml` |
+| **pytest** (pre-push) | быстрые тесты (`-m "not slow"`) перед `git push` |
+
+```bash
+make install     # poetry install + установка git-хуков pre-commit и pre-push
+make lint        # все проверки pre-commit по всему репозиторию
+make format      # ruff format + автоисправления ruff
+make typecheck   # mypy
+```
+
+Коммит, нарушающий любую из проверок, блокируется до исправления; часть
+проверок (форматирование, сортировка импортов, перевод строки в конце файла,
+выводы ноутбуков) исправляется хуками автоматически — достаточно добавить
+исправленные файлы и повторить коммит.
 
 ---
 
@@ -834,7 +861,10 @@ Workflow срабатывает на каждый push в любую ветку 
    `poetry check --lock`.
 5. Установка зависимостей строго по lock-файлу: `poetry install` (на Linux —
    CPU-сборка torch из индекса PyTorch).
-6. Проверка стиля: `poetry run ruff check src tests`.
+6. Статические проверки — те же хуки, что и локально:
+   `poetry run pre-commit run --all-files` (ruff, ruff format, mypy,
+   nbstripout, гигиена файлов, `poetry check --lock`); окружения хуков
+   кэшируются по хешу `.pre-commit-config.yaml`.
 7. Запуск тестов: `poetry run pytest -q` (полный набор включая slow).
 
 **Job `docker-smoke`** (зависит от успешного завершения `lint-and-test`):
@@ -922,12 +952,13 @@ ml-pipeline-knowledge-tracing/
 ├── Dockerfile                      # описание контейнерного образа
 ├── docker-compose.yml              # два сервиса: pipeline + mlflow UI
 ├── .dockerignore                   # исключения для контекста сборки Docker
-├── pyproject.toml                  # зависимости (Poetry) + настройки pytest и ruff
+├── pyproject.toml                  # зависимости (Poetry) + настройки pytest, ruff, mypy
+├── .pre-commit-config.yaml         # git-хуки: ruff, mypy, nbstripout, гигиена файлов
 ├── poetry.lock                     # точные версии всех пакетов
 ├── poetry.toml                     # .venv создаётся внутри проекта
 ├── .python-version                 # версия Python (3.11)
 ├── Makefile                        # удобные команды (install, all, test, lint, docker, ...)
-├── .vscode/                        # интерпретатор из .venv, pytest в VS Code
+├── .vscode/                        # интерпретатор из .venv, pytest, ruff и mypy в VS Code
 ├── .gitignore
 ├── .github/
 │   └── workflows/
@@ -1016,10 +1047,10 @@ ml-pipeline-knowledge-tracing/
 воссоздаёт идентичное окружение на любой машине.
 
 ```bash
-# 1. Создать .venv/ в корне проекта и установить зависимости строго по poetry.lock
-#    (runtime + группа dev: pytest, ruff, mypy, pre-commit)
-poetry install
-# или эквивалентно: make install
+# 1. Создать .venv/ в корне проекта, установить зависимости строго по poetry.lock
+#    (runtime + группа dev: pytest, ruff, mypy, pre-commit) и git-хуки pre-commit
+make install
+# или вручную: poetry install && poetry run pre-commit install
 
 # 2. Быстрая проверка установки
 poetry run pytest -m "not slow" -q
