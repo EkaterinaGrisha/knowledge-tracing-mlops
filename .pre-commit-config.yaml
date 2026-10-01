@@ -2,6 +2,8 @@
 # Install once after cloning:  make install  (or: poetry run pre-commit install)
 # Run on the whole repository:  poetry run pre-commit run --all-files
 default_install_hook_types: [pre-commit, pre-push]
+# Checks run on commit; only the test hook below opts into pre-push.
+default_stages: [pre-commit]
 default_language_version:
   python: python3.11
 
