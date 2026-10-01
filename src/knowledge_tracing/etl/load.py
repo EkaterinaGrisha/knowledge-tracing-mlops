@@ -10,14 +10,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from ..utils import get_logger, resolve
+from ..config import resolve_path
+from ..utils import get_logger
 from .transform import ProcessedData
 
 LOG = get_logger()
 
 
-def load(processed: ProcessedData, cfg: dict) -> dict[str, Path]:
-    out_dir = resolve(cfg["data"]["processed_dir"])
+def load(processed: ProcessedData, processed_dir: Path) -> dict[str, Path]:
+    out_dir = resolve_path(processed_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     features_path = out_dir / "features.parquet"

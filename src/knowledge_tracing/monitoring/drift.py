@@ -29,10 +29,15 @@ def _psi(reference: np.ndarray, current: np.ndarray, bins: int = 10) -> float:
 
 
 def drift_report(
-    reference: pd.DataFrame, current: pd.DataFrame, feature_cols: list[str], cfg: dict
+    reference: pd.DataFrame,
+    current: pd.DataFrame,
+    feature_cols: list[str],
+    *,
+    psi_warn: float,
+    psi_alert: float,
 ) -> dict:
-    warn = cfg["monitoring"]["psi_warn"]
-    alert = cfg["monitoring"]["psi_alert"]
+    warn = psi_warn
+    alert = psi_alert
     features: dict[str, dict] = {}
     n_alert = 0
     for col in feature_cols:

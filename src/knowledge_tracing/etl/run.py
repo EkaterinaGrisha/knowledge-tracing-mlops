@@ -3,26 +3,30 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
-from ..utils import get_logger, load_config
-from .extract import extract
+from ..config import DEFAULT_CONFIG_PATH, PathLike, load_config
+from ..utils import get_logger
+from .extract import DataSource, extract
 from .load import load
-from .transform import transform
+from .transform import ProcessedData, transform
 
 LOG = get_logger()
 
 
-def run_etl(config_path: str, data_source: str):
+def run_etl(
+    config_path: PathLike, data_source: DataSource
+) -> tuple[ProcessedData, dict[str, Path]]:
     cfg = load_config(config_path)
-    df_raw = extract(cfg, data_source=data_source)
-    processed = transform(df_raw, cfg)
-    paths = load(processed, cfg)
+    df_raw = extract(cfg.data, data_source=data_source)
+    processed = transform(df_raw, cfg.data, seed=cfg.seed)
+    paths = load(processed, cfg.data.processed_dir)
     return processed, paths
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run the ETL stage only.")
-    ap.add_argument("--config", default="config/config.yaml")
+    ap.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     ap.add_argument("--data-source", choices=["sample", "full"], default="sample")
     args = ap.parse_args()
     _, paths = run_etl(args.config, args.data_source)

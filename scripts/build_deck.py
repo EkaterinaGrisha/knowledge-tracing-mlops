@@ -17,7 +17,8 @@ from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.util import Inches, Pt
 
-from knowledge_tracing.utils import get_logger, resolve
+from knowledge_tracing.config import resolve_path
+from knowledge_tracing.utils import get_logger
 
 LOG = get_logger()
 
@@ -28,7 +29,7 @@ DARK = RGBColor(0x22, 0x22, 0x22)
 
 
 def _load_metrics() -> dict:
-    path = resolve("reports/metrics.json")
+    path = resolve_path("reports/metrics.json")
     if not path.exists():
         raise FileNotFoundError("reports/metrics.json not found — run the pipeline first.")
     with path.open(encoding="utf-8") as fh:
@@ -82,7 +83,7 @@ def _add_bullets(
 
 
 def _add_image(slide, name: str, left: float, top: float, width: float) -> None:
-    path = resolve(f"reports/figures/{name}")
+    path = resolve_path(f"reports/figures/{name}")
     if path.exists():
         slide.shapes.add_picture(str(path), Inches(left), Inches(top), width=Inches(width))
 
@@ -565,7 +566,7 @@ def build(output: str = "presentation/presentation.pptx") -> str:
     _monitoring_slide(prs, metrics)
     _conclusions_slide(prs, metrics)
 
-    out = resolve(output)
+    out = resolve_path(output)
     out.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out))
     LOG.info("Presentation saved -> %s (%d slides)", out, len(prs.slides._sldIdLst))

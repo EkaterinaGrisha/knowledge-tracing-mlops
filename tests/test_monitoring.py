@@ -5,19 +5,19 @@ from knowledge_tracing.monitoring.data_quality import quality_report
 from knowledge_tracing.monitoring.drift import drift_report
 
 
-def test_no_drift_for_identical_distributions(mini_cfg):
+def test_no_drift_for_identical_distributions():
     rng = np.random.default_rng(0)
     df = pd.DataFrame({"a": rng.normal(size=500), "b": rng.normal(size=500)})
-    report = drift_report(df, df.copy(), ["a", "b"], mini_cfg)
+    report = drift_report(df, df.copy(), ["a", "b"], psi_warn=0.1, psi_alert=0.25)
     assert report["overall_status"] == "OK"
     assert report["n_significant_drift"] == 0
 
 
-def test_drift_detected_for_shifted_distribution(mini_cfg):
+def test_drift_detected_for_shifted_distribution():
     rng = np.random.default_rng(0)
     ref = pd.DataFrame({"a": rng.normal(0, 1, size=500)})
     cur = pd.DataFrame({"a": rng.normal(5, 1, size=500)})  # large shift
-    report = drift_report(ref, cur, ["a"], mini_cfg)
+    report = drift_report(ref, cur, ["a"], psi_warn=0.1, psi_alert=0.25)
     assert report["features"]["a"]["status"] == "significant_drift"
 
 

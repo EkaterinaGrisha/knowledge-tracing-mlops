@@ -16,14 +16,17 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 import requests
 
-from ..utils import get_logger, resolve
+from ..config import DataConfig, resolve_path
+from ..utils import get_logger
 
 LOG = get_logger()
 LONG_COLUMNS = ["user_id", "order_idx", "skill_id", "correct"]
+DataSource = Literal["sample", "full"]
 
 
 def _download(url: str, dest: Path, retries: int = 4) -> None:
@@ -70,16 +73,16 @@ def parse_triplet_file(path: Path, user_offset: int = 0) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=LONG_COLUMNS)
 
 
-def extract(cfg: dict, data_source: str = "sample") -> pd.DataFrame:
+def extract(data_cfg: DataConfig, data_source: DataSource = "sample") -> pd.DataFrame:
     """Return the raw interactions as a long DataFrame.
 
-    Parameters
-    ----------
-    data_source : "sample" | "full"
+    Args:
+        data_cfg: Data section of the configuration.
+        data_source: ``"sample"`` — the committed subset (offline);
+            ``"full"`` — the full dataset, downloaded and cached on first use.
     """
-    data_cfg = cfg["data"]
     if data_source == "sample":
-        sample_path = resolve(data_cfg["sample_path"])
+        sample_path = resolve_path(data_cfg.sample_path)
         if not sample_path.exists():
             raise FileNotFoundError(
                 f"Sample dataset not found at {sample_path}. "
@@ -90,13 +93,13 @@ def extract(cfg: dict, data_source: str = "sample") -> pd.DataFrame:
         return df[LONG_COLUMNS].copy()
 
     if data_source == "full":
-        raw_dir = resolve(data_cfg["raw_dir"])
+        raw_dir = resolve_path(data_cfg.raw_dir)
         train_path = raw_dir / "assist2009_train.csv"
         test_path = raw_dir / "assist2009_test.csv"
         if not train_path.exists():
-            _download(data_cfg["source_url_train"], train_path)
+            _download(data_cfg.source_url_train, train_path)
         if not test_path.exists():
-            _download(data_cfg["source_url_test"], test_path)
+            _download(data_cfg.source_url_test, test_path)
 
         df_train = parse_triplet_file(train_path, user_offset=0)
         next_uid = int(df_train["user_id"].max()) + 1 if len(df_train) else 0
@@ -113,11 +116,11 @@ def extract(cfg: dict, data_source: str = "sample") -> pd.DataFrame:
     raise ValueError(f"Unknown data_source: {data_source!r} (expected 'sample' or 'full')")
 
 
-def write_sample(df: pd.DataFrame, cfg: dict, n_students: int = 300) -> Path:
-    """Persist the first `n_students` students as the committed sample CSV."""
+def write_sample(df: pd.DataFrame, sample_path: Path, n_students: int = 300) -> Path:
+    """Persist the first ``n_students`` students as the committed sample CSV."""
     keep = sorted(df["user_id"].unique())[:n_students]
     sample = df[df["user_id"].isin(keep)].copy()
-    out = resolve(cfg["data"]["sample_path"])
+    out = resolve_path(sample_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     sample.to_csv(out, index=False)
     LOG.info(

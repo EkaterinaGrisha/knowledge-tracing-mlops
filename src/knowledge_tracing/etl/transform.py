@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from ..config import DataConfig
 from ..utils import get_logger
 
 LOG = get_logger()
@@ -67,11 +68,9 @@ def _assign_splits(
     return split_of
 
 
-def transform(df_raw: pd.DataFrame, cfg: dict) -> ProcessedData:
-    data_cfg = cfg["data"]
-    seed = cfg["seed"]
-    min_len = int(data_cfg["min_seq_len"])
-    max_len = int(data_cfg["max_seq_len"])
+def transform(df_raw: pd.DataFrame, data_cfg: DataConfig, seed: int) -> ProcessedData:
+    min_len = data_cfg.min_seq_len
+    max_len = data_cfg.max_seq_len
 
     df = df_raw.copy()
     # --- clean ---
@@ -98,9 +97,7 @@ def transform(df_raw: pd.DataFrame, cfg: dict) -> ProcessedData:
     df["order_idx"] = df.groupby("user_id").cumcount()
 
     # --- split by student ---
-    split_of = _assign_splits(
-        df["user_id"].to_numpy(), data_cfg["val_frac"], data_cfg["test_frac"], seed
-    )
+    split_of = _assign_splits(df["user_id"].to_numpy(), data_cfg.val_frac, data_cfg.test_frac, seed)
     df["split"] = df["user_id"].map(split_of)
 
     # --- causal feature engineering ---
