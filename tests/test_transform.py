@@ -1,6 +1,7 @@
 import pandas as pd
 
-from knowledge_tracing.etl.transform import FEATURE_COLS, build_sequences, transform
+from knowledge_tracing.etl.datasets import build_sequences
+from knowledge_tracing.etl.transform import FEATURE_COLS, transform
 
 
 def test_transform_schema_and_splits(raw_long, data_cfg):
@@ -39,5 +40,6 @@ def test_features_are_causal(data_cfg):
 def test_build_sequences(raw_long, data_cfg):
     pd_data = transform(raw_long, data_cfg, seed=0)
     seqs = build_sequences(pd_data.long, "train")
-    assert all(len(s["skills"]) == len(s["correct"]) for s in seqs)
-    assert all(len(s["skills"]) >= 1 for s in seqs)
+    assert all(len(s.skills) == len(s.correct) for s in seqs)
+    assert all(len(s) >= 1 for s in seqs)
+    assert len({s.user_id for s in seqs}) == len(seqs)

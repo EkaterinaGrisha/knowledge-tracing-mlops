@@ -4,41 +4,63 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from knowledge_tracing.etl.datasets import StudentSequence
+from knowledge_tracing.evaluation.metrics import roc_auc
 from knowledge_tracing.models import dkt as dkt_mod
 
 
 @pytest.fixture
-def tiny_sequences():
+def tiny_sequences() -> list[StudentSequence]:
     rng = np.random.default_rng(0)
     seqs = []
-    for _ in range(40):
+    for uid in range(40):
         n = rng.integers(5, 12)
-        seqs.append({"skills": rng.integers(0, 4, size=n), "correct": rng.integers(0, 2, size=n)})
+        seqs.append(
+            StudentSequence(
+                user_id=uid, skills=rng.integers(0, 4, size=n), correct=rng.integers(0, 2, size=n)
+            )
+        )
     return seqs
 
 
 @pytest.mark.slow
 def test_dkt_trains_and_predicts(tiny_sequences):
     device = dkt_mod.pick_device()
-    traces = dkt_mod.traces_from_sequences(tiny_sequences)
     model, losses = dkt_mod.train_dkt(
-        traces, n_concepts=4, device=device, epochs=2, hidden_dim=16, embed_dim=16
+        tiny_sequences,
+        n_concepts=4,
+        device=device,
+        embed_dim=16,
+        hidden_dim=16,
+        dropout=0.2,
+        epochs=2,
+        batch_size=32,
+        lr=5e-3,
+        seed=0,
     )
     assert len(losses) == 2
-    _auc, acc, _rmse, yt, yp = dkt_mod.evaluate_dkt(model, traces, device)
-    assert 0.0 <= acc <= 1.0
-    assert len(yt) == len(yp)
+    y_true, y_pred = dkt_mod.predict_dkt(model, tiny_sequences, device)
+    # one prediction per transition (every interaction except the first of each student)
+    assert len(y_true) == len(y_pred) == sum(len(s) - 1 for s in tiny_sequences)
+    assert ((y_pred >= 0.0) & (y_pred <= 1.0)).all()
 
 
 @pytest.mark.slow
 def test_flaml_trains():
-    from knowledge_tracing.models.automl_flaml import evaluate_automl, train_automl
+    from knowledge_tracing.models.automl_flaml import predict_automl, train_automl
 
     rng = np.random.default_rng(0)
     X = pd.DataFrame({"f1": rng.normal(size=300), "f2": rng.normal(size=300)})
     y = pd.Series((X["f1"] + rng.normal(0, 0.3, size=300) > 0).astype(int))
     automl = train_automl(
-        X.iloc[:200], y.iloc[:200], X.iloc[200:250], y.iloc[200:250], time_budget_s=5
+        X.iloc[:200],
+        y.iloc[:200],
+        X.iloc[200:250],
+        y.iloc[200:250],
+        time_budget_s=5,
+        metric="roc_auc",
+        estimator_list=["lgbm"],
+        seed=0,
     )
-    auc, _acc, _rmse, _yt, _yp = evaluate_automl(automl, X.iloc[250:], y.iloc[250:])
-    assert 0.0 <= auc <= 1.0
+    y_true, y_pred = predict_automl(automl, X.iloc[250:], y.iloc[250:])
+    assert 0.0 <= roc_auc(y_true, y_pred) <= 1.0

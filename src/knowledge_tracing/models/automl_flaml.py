@@ -11,7 +11,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from flaml import AutoML
-from sklearn.metrics import accuracy_score, mean_squared_error, roc_auc_score
 
 from ..utils import get_logger
 
@@ -24,10 +23,10 @@ def train_automl(
     X_val: pd.DataFrame,
     y_val: pd.Series,
     *,
-    time_budget_s: int = 60,
-    metric: str = "roc_auc",
-    estimator_list: list[str] | None = None,
-    seed: int = 42,
+    time_budget_s: int,
+    metric: str,
+    estimator_list: list[str],
+    seed: int,
 ) -> AutoML:
     automl = AutoML()
     automl.fit(
@@ -38,7 +37,7 @@ def train_automl(
         task="classification",
         metric=metric,
         time_budget=time_budget_s,
-        estimator_list=estimator_list or ["lgbm", "xgboost", "rf", "extra_tree"],
+        estimator_list=estimator_list,
         seed=seed,
         verbose=0,
         early_stop=True,
@@ -47,10 +46,7 @@ def train_automl(
     return automl
 
 
-def evaluate_automl(automl: AutoML, X: pd.DataFrame, y: pd.Series):
+def predict_automl(automl: AutoML, X: pd.DataFrame, y: pd.Series) -> tuple[np.ndarray, np.ndarray]:
+    """Predictions on a feature frame: (observed correctness, P(correct))."""
     proba = automl.predict_proba(X)[:, 1]
-    yt = y.to_numpy().astype(int)
-    auc = float(roc_auc_score(yt, proba))
-    acc = float(accuracy_score(yt, (proba > 0.5).astype(int)))
-    rmse = float(np.sqrt(mean_squared_error(yt, proba)))
-    return auc, acc, rmse, yt, proba
+    return y.to_numpy().astype(int), proba

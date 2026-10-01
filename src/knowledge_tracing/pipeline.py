@@ -19,14 +19,15 @@ import mlflow
 import numpy as np
 
 from .config import DEFAULT_CONFIG_PATH, PathLike, load_config, quick_overlay_path, resolve_path
+from .etl.datasets import build_sequences
 from .etl.extract import DataSource, extract
 from .etl.load import load
-from .etl.transform import build_sequences, transform
+from .etl.transform import transform
 from .evaluation import visualize as viz
 from .evaluation.metrics import compute_metrics
 from .models import bkt as bkt_mod
 from .models import dkt as dkt_mod
-from .models.automl_flaml import evaluate_automl, train_automl
+from .models.automl_flaml import predict_automl, train_automl
 from .models.dkt_optuna import search_dkt
 from .monitoring.data_quality import quality_report
 from .monitoring.drift import drift_report
@@ -81,20 +82,17 @@ def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> 
         # ---------- 1) BKT baseline ----------
         with ResourceMonitor("bkt") as rm:
             bkt_params = bkt_mod.fit_bkt_per_skill(train_seq, n_skills, cfg.models.bkt.em_iters)
-            _, _, _, yt_bkt, yp_bkt = bkt_mod.evaluate_bkt(bkt_params, test_seq, n_skills)
+            yt_bkt, yp_bkt = bkt_mod.predict_bkt(bkt_params, test_seq, n_skills)
         results["BKT"] = compute_metrics(yt_bkt, yp_bkt)
         preds["BKT"] = (yt_bkt, yp_bkt)
         resources["BKT"] = rm.stats.as_dict()
 
         # ---------- 2) DKT (default config) ----------
         device = dkt_mod.pick_device()
-        train_traces = dkt_mod.traces_from_sequences(train_seq)
-        val_traces = dkt_mod.traces_from_sequences(val_seq)
-        test_traces = dkt_mod.traces_from_sequences(test_seq)
         dcfg = cfg.models.dkt
         with ResourceMonitor("dkt") as rm:
             dkt_model, losses = dkt_mod.train_dkt(
-                train_traces,
+                train_seq,
                 n_skills,
                 device=device,
                 embed_dim=dcfg.embed_dim,
@@ -105,7 +103,7 @@ def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> 
                 lr=dcfg.lr,
                 seed=seed,
             )
-            _, _, _, yt_dkt, yp_dkt = dkt_mod.evaluate_dkt(dkt_model, test_traces, device)
+            yt_dkt, yp_dkt = dkt_mod.predict_dkt(dkt_model, test_seq, device)
         results["DKT"] = compute_metrics(yt_dkt, yp_dkt)
         preds["DKT"] = (yt_dkt, yp_dkt)
         resources["DKT"] = rm.stats.as_dict()
@@ -114,16 +112,16 @@ def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> 
         ocfg = cfg.models.dkt_optuna
         with ResourceMonitor("dkt_optuna") as rm:
             search = search_dkt(
-                train_traces,
-                val_traces,
+                train_seq,
+                val_seq,
                 n_skills,
                 n_trials=ocfg.n_trials,
                 epochs_per_trial=ocfg.epochs_per_trial,
                 seed=seed,
             )
-            best = search["best_params"]
+            best = search.best_params
             best_model, _ = dkt_mod.train_dkt(
-                train_traces,
+                train_seq,
                 n_skills,
                 device=device,
                 embed_dim=best["embed_dim"],
@@ -134,12 +132,12 @@ def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> 
                 epochs=dcfg.epochs,
                 seed=seed,
             )
-            _, _, _, yt_opt, yp_opt = dkt_mod.evaluate_dkt(best_model, test_traces, device)
+            yt_opt, yp_opt = dkt_mod.predict_dkt(best_model, test_seq, device)
         results["DKT+Optuna"] = compute_metrics(yt_opt, yp_opt)
         preds["DKT+Optuna"] = (yt_opt, yp_opt)
         resources["DKT+Optuna"] = rm.stats.as_dict()
         mlflow.log_params({f"dkt_optuna_{k}": v for k, v in best.items()})
-        mlflow.log_metric("dkt_optuna_best_val_auc", search["best_val_auc"])
+        mlflow.log_metric("dkt_optuna_best_val_auc", search.best_val_auc)
 
         # ---------- 4) FLAML AutoML ----------
         Xtr, ytr = processed.split_xy("train")
@@ -157,7 +155,7 @@ def run(config_path: PathLike, data_source: DataSource, quick: bool = False) -> 
                 estimator_list=list(acfg.estimator_list),
                 seed=seed,
             )
-            _, _, _, yt_aml, yp_aml = evaluate_automl(automl, Xte, yte)
+            yt_aml, yp_aml = predict_automl(automl, Xte, yte)
         results["AutoML"] = compute_metrics(yt_aml, yp_aml)
         preds["AutoML"] = (yt_aml, yp_aml)
         resources["AutoML"] = rm.stats.as_dict()

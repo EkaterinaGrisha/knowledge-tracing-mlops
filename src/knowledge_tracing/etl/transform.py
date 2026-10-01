@@ -157,22 +157,3 @@ def transform(df_raw: pd.DataFrame, data_cfg: DataConfig, seed: int) -> Processe
         skill_remap=skill_remap,
         stats=stats,
     )
-
-
-def build_sequences(long: pd.DataFrame, split: str) -> list[dict]:
-    """Per-student chronological sequences for the split, for DKT/BKT.
-
-    Returns a list of {"user_id", "skills": np.ndarray, "correct": np.ndarray}.
-    """
-    sub = long[long["split"] == split].sort_values(["user_id", "order_idx"])
-    out: list[dict] = []
-    for uid, grp in sub.groupby("user_id"):
-        out.append(
-            {
-                # pandas-stubs types groupby keys as a generic scalar; user_id is an int column.
-                "user_id": int(uid),  # type: ignore[arg-type]
-                "skills": grp["skill_idx"].to_numpy(dtype=np.int64),
-                "correct": grp["correct"].to_numpy(dtype=np.int64),
-            }
-        )
-    return out

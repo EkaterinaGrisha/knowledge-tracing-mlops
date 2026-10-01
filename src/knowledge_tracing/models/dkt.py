@@ -9,22 +9,23 @@ correctness of step t+1; loss is taken only on the skill actually seen next
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+from ..etl.datasets import StudentSequence
 from ..utils import get_logger
 
 LOG = get_logger()
 
+Batch = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
-class DKTModel(nn.Module):
-    def __init__(
-        self, n_concepts: int, embed_dim: int = 64, hidden_dim: int = 64, dropout: float = 0.2
-    ):
+
+class DKTNetwork(nn.Module):
+    """Embedding -> LSTM -> per-skill logit of answering the next exercise correctly."""
+
+    def __init__(self, n_concepts: int, embed_dim: int, hidden_dim: int, dropout: float) -> None:
         super().__init__()
         self.n_concepts = n_concepts
         self.embed = nn.Embedding(2 * n_concepts, embed_dim)
@@ -40,47 +41,34 @@ class DKTModel(nn.Module):
         return self.head(self.drop(out))
 
 
-@dataclass
-class StudentTrace:
-    concept_idx: np.ndarray
-    correct: np.ndarray
-    length: int
+def _supervised(sequences: list[StudentSequence]) -> list[StudentSequence]:
+    """Sequences with at least one transition to supervise (length >= 2)."""
+    return [s for s in sequences if len(s) >= 2]
 
 
-def traces_from_sequences(sequences: list[dict]) -> list[StudentTrace]:
-    """Build DKT traces directly from ordered ASSISTments sequences (no synthetic interleave)."""
-    traces: list[StudentTrace] = []
-    for s in sequences:
-        skills = np.asarray(s["skills"], dtype=np.int64)
-        correct = np.asarray(s["correct"], dtype=np.int64)
-        if len(skills) >= 2:  # need at least one transition to supervise
-            traces.append(StudentTrace(skills, correct, len(skills)))
-    return traces
+def _input_indices(seq: StudentSequence) -> np.ndarray:
+    return 2 * seq.skills + seq.correct
 
 
-def make_input_indices(trace: StudentTrace) -> np.ndarray:
-    return 2 * trace.concept_idx + trace.correct
-
-
-def collate_traces(traces: list[StudentTrace], device: torch.device):
-    max_t = max(tr.length for tr in traces)
-    B = len(traces)
-    x = np.zeros((B, max_t), dtype=np.int64)
-    lengths = np.zeros((B,), dtype=np.int64)
-    next_c = np.zeros((B, max_t), dtype=np.int64)
-    next_y = np.zeros((B, max_t), dtype=np.float32)
-    for b, tr in enumerate(traces):
-        L = tr.length
-        x[b, :L] = make_input_indices(tr)
-        lengths[b] = L
-        if L > 1:
-            next_c[b, : L - 1] = tr.concept_idx[1:L]
-            next_y[b, : L - 1] = tr.correct[1:L].astype(np.float32)
+def _collate(batch: list[StudentSequence], device: torch.device) -> Batch:
+    max_t = max(len(s) for s in batch)
+    size = len(batch)
+    x = np.zeros((size, max_t), dtype=np.int64)
+    lengths = np.zeros((size,), dtype=np.int64)
+    next_skill = np.zeros((size, max_t), dtype=np.int64)
+    next_correct = np.zeros((size, max_t), dtype=np.float32)
+    for b, seq in enumerate(batch):
+        length = len(seq)
+        x[b, :length] = _input_indices(seq)
+        lengths[b] = length
+        if length > 1:
+            next_skill[b, : length - 1] = seq.skills[1:length]
+            next_correct[b, : length - 1] = seq.correct[1:length].astype(np.float32)
     return (
         torch.from_numpy(x).to(device),
         torch.from_numpy(lengths).to(device),
-        torch.from_numpy(next_c).to(device),
-        torch.from_numpy(next_y).to(device),
+        torch.from_numpy(next_skill).to(device),
+        torch.from_numpy(next_correct).to(device),
     )
 
 
@@ -90,38 +78,39 @@ def _supervision_mask(lengths: torch.Tensor, max_t: int) -> torch.Tensor:
 
 
 def train_dkt(
-    train_traces: list[StudentTrace],
+    sequences: list[StudentSequence],
     n_concepts: int,
     *,
     device: torch.device,
-    embed_dim: int = 64,
-    hidden_dim: int = 64,
-    dropout: float = 0.2,
-    epochs: int = 15,
-    batch_size: int = 32,
-    lr: float = 5e-3,
-    seed: int = 42,
+    embed_dim: int,
+    hidden_dim: int,
+    dropout: float,
+    epochs: int,
+    batch_size: int,
+    lr: float,
+    seed: int,
     verbose: bool = False,
-) -> tuple[DKTModel, list[float]]:
+) -> tuple[DKTNetwork, list[float]]:
+    train = _supervised(sequences)
     torch.manual_seed(seed)
     # Also seed NumPy's global RNG for third-party code that relies on it.
     np.random.seed(seed)  # noqa: NPY002
-    model = DKTModel(n_concepts, embed_dim, hidden_dim, dropout).to(device)
+    model = DKTNetwork(n_concepts, embed_dim, hidden_dim, dropout).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.BCEWithLogitsLoss(reduction="none")
     rng = np.random.default_rng(seed)
     losses: list[float] = []
     for epoch in range(epochs):
         model.train()
-        order = rng.permutation(len(train_traces))
+        order = rng.permutation(len(train))
         epoch_loss = 0.0
         n_batches = 0
         for i in range(0, len(order), batch_size):
-            batch = [train_traces[j] for j in order[i : i + batch_size]]
-            x, lengths, next_c, next_y = collate_traces(batch, device)
+            batch = [train[j] for j in order[i : i + batch_size]]
+            x, lengths, next_skill, next_correct = _collate(batch, device)
             logits = model(x, lengths)
-            logit_at_target = logits.gather(2, next_c.unsqueeze(-1)).squeeze(-1)
-            raw = loss_fn(logit_at_target, next_y)
+            logit_at_target = logits.gather(2, next_skill.unsqueeze(-1)).squeeze(-1)
+            raw = loss_fn(logit_at_target, next_correct)
             mask = _supervision_mask(lengths, x.size(1))
             loss = (raw * mask).sum() / mask.sum().clamp_min(1.0)
             optim.zero_grad()
@@ -138,28 +127,26 @@ def train_dkt(
 
 
 @torch.no_grad()
-def evaluate_dkt(
-    model: DKTModel, traces: list[StudentTrace], device: torch.device, batch_size: int = 64
-):
-    from sklearn.metrics import accuracy_score, mean_squared_error, roc_auc_score
-
+def predict_dkt(
+    model: DKTNetwork,
+    sequences: list[StudentSequence],
+    device: torch.device,
+    batch_size: int = 64,
+) -> tuple[np.ndarray, np.ndarray]:
+    """One-step-ahead predictions: (observed correctness, P(correct)) per transition."""
+    supervised = _supervised(sequences)
     model.eval()
     y_true: list[np.ndarray] = []
     y_pred: list[np.ndarray] = []
-    for i in range(0, len(traces), batch_size):
-        batch = traces[i : i + batch_size]
-        x, lengths, next_c, next_y = collate_traces(batch, device)
+    for i in range(0, len(supervised), batch_size):
+        batch = supervised[i : i + batch_size]
+        x, lengths, next_skill, next_correct = _collate(batch, device)
         logits = model(x, lengths)
-        probs = torch.sigmoid(logits.gather(2, next_c.unsqueeze(-1)).squeeze(-1))
+        probs = torch.sigmoid(logits.gather(2, next_skill.unsqueeze(-1)).squeeze(-1))
         mask = _supervision_mask(lengths, x.size(1)).bool().cpu().numpy()
-        y_true.append(next_y.cpu().numpy()[mask])
+        y_true.append(next_correct.cpu().numpy()[mask])
         y_pred.append(probs.cpu().numpy()[mask])
-    yt = np.concatenate(y_true)
-    yp = np.concatenate(y_pred)
-    auc = float(roc_auc_score(yt, yp))
-    acc = float(accuracy_score(yt, (yp > 0.5).astype(int)))
-    rmse = float(np.sqrt(mean_squared_error(yt, yp)))
-    return auc, acc, rmse, yt, yp
+    return np.concatenate(y_true), np.concatenate(y_pred)
 
 
 def pick_device() -> torch.device:

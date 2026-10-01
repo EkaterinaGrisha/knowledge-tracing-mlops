@@ -14,6 +14,14 @@ from sklearn.metrics import (
 )
 
 
+def roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
+    """ROC-AUC of raw scores; NaN when only one class is present."""
+    labels = np.asarray(y_true).astype(int)
+    if len(np.unique(labels)) < 2:
+        return float("nan")
+    return float(roc_auc_score(labels, y_score))
+
+
 def compute_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict[str, float]:
     yt = np.asarray(y_true).astype(int)
     yp = np.clip(np.asarray(y_pred_proba, dtype=float), 1e-7, 1 - 1e-7)

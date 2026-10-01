@@ -11,7 +11,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-from sklearn.metrics import accuracy_score, mean_squared_error, roc_auc_score
+
+from ..etl.datasets import StudentSequence
 
 
 @dataclass
@@ -147,14 +148,14 @@ def predict_next_correct(seq: list[int], p: BktParams) -> list[float]:
 # ── ASSISTments adapter: per-skill fit + evaluation ────────────────────────
 
 
-def _per_skill_subsequences(sequences: list[dict], n_skills: int) -> list[list[list[int]]]:
+def _per_skill_subsequences(
+    sequences: list[StudentSequence], n_skills: int
+) -> list[list[list[int]]]:
     """Group each student's interactions by skill, preserving within-skill order."""
     by_skill: list[list[list[int]]] = [[] for _ in range(n_skills)]
     for s in sequences:
-        skills = s["skills"]
-        correct = s["correct"]
         buckets: dict[int, list[int]] = {}
-        for k, y in zip(skills, correct, strict=True):
+        for k, y in zip(s.skills, s.correct, strict=True):
             buckets.setdefault(int(k), []).append(int(y))
         for k, seq in buckets.items():
             by_skill[k].append(seq)
@@ -162,7 +163,7 @@ def _per_skill_subsequences(sequences: list[dict], n_skills: int) -> list[list[l
 
 
 def fit_bkt_per_skill(
-    train_sequences: list[dict], n_skills: int, em_iters: int = 30
+    train_sequences: list[StudentSequence], n_skills: int, em_iters: int
 ) -> dict[int, BktParams]:
     by_skill = _per_skill_subsequences(train_sequences, n_skills)
     params: dict[int, BktParams] = {}
@@ -172,10 +173,11 @@ def fit_bkt_per_skill(
     return params
 
 
-def evaluate_bkt(
-    params_by_skill: dict[int, BktParams], eval_sequences: list[dict], n_skills: int
-) -> tuple[float, float, float, np.ndarray, np.ndarray]:
-    by_skill = _per_skill_subsequences(eval_sequences, n_skills)
+def predict_bkt(
+    params_by_skill: dict[int, BktParams], sequences: list[StudentSequence], n_skills: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """One-step-ahead predictions: (observed correctness, P(correct)) per interaction."""
+    by_skill = _per_skill_subsequences(sequences, n_skills)
     y_true: list[int] = []
     y_pred: list[float] = []
     for k in range(n_skills):
@@ -184,9 +186,4 @@ def evaluate_bkt(
             preds = predict_next_correct(seq, p)
             y_true.extend(seq)
             y_pred.extend(preds)
-    yt = np.asarray(y_true, dtype=int)
-    yp = np.asarray(y_pred, dtype=float)
-    auc = float(roc_auc_score(yt, yp)) if len(set(yt.tolist())) > 1 else float("nan")
-    acc = float(accuracy_score(yt, (yp > 0.5).astype(int)))
-    rmse = float(np.sqrt(mean_squared_error(yt, yp)))
-    return auc, acc, rmse, yt, yp
+    return np.asarray(y_true, dtype=int), np.asarray(y_pred, dtype=float)
