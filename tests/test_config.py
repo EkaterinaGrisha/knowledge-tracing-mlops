@@ -67,3 +67,26 @@ def test_relative_paths_resolve_against_project_root(tmp_path, monkeypatch):
     monkeypatch.setenv(PROJECT_ROOT_ENV, str(tmp_path))
     assert resolve_path("data/raw") == tmp_path.resolve() / "data" / "raw"
     assert resolve_path("/abs/path") == Path("/abs/path")
+
+
+def test_min_length_above_max_length_is_rejected(tmp_path):
+    def inverted_lengths(data):
+        data["data"]["min_seq_len"] = 500
+
+    with pytest.raises(ValidationError, match="min_seq_len"):
+        load_config(_write_config(tmp_path, inverted_lengths))
+
+
+def test_drift_thresholds_must_be_ordered(tmp_path):
+    def swapped_thresholds(data):
+        data["monitoring"]["psi_warn"] = 0.3
+
+    with pytest.raises(ValidationError, match="psi_warn"):
+        load_config(_write_config(tmp_path, swapped_thresholds))
+
+
+def test_top_level_must_be_a_mapping(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text("- just\n- a list\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="mapping"):
+        load_config(path)

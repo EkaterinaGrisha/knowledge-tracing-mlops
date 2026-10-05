@@ -31,7 +31,7 @@ DataSource = Literal["sample", "full"]
 
 def _download(url: str, dest: Path, retries: int = 4) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    last_err: Exception | None = None
+    last_err: requests.RequestException | None = None
     for attempt in range(retries):
         try:
             LOG.info("Downloading %s -> %s", url, dest)
@@ -39,7 +39,7 @@ def _download(url: str, dest: Path, retries: int = 4) -> None:
             resp.raise_for_status()
             dest.write_bytes(resp.content)
             return
-        except Exception as exc:
+        except requests.RequestException as exc:  # network and HTTP errors are retried
             last_err = exc
             wait = 2 ** (attempt + 1)
             LOG.warning(

@@ -21,8 +21,9 @@ format:
 typecheck:
 	$(RUN) mypy
 
+# Full test suite with the coverage report (fails below the threshold in pyproject.toml).
 test:
-	$(RUN) pytest -q
+	$(RUN) pytest -q --cov
 
 etl:
 	$(RUN) kt etl --data-source sample

@@ -83,6 +83,16 @@ markers = [
   "slow: marks tests that train models (deselect with '-m \"not slow\"')",
 ]
 
+[tool.coverage.run]
+source = ["knowledge_tracing"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# CI fails if the test suite covers less of the package than this
+fail_under = 90
+
 [tool.ruff]
 line-length = 100
 target-version = "py311"

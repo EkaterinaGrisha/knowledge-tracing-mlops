@@ -59,8 +59,10 @@ jobs:
           SKIP: no-commit-to-branch
         run: poetry run pre-commit run --all-files --show-diff-on-failure
 
-      - name: Run tests (pytest)
-        run: poetry run pytest -q
+      # Coverage of the knowledge_tracing package; fails below fail_under
+      # in pyproject.toml.
+      - name: Run tests with coverage (pytest)
+        run: poetry run pytest -q --cov --cov-report=term-missing
 
   docker-smoke:
     runs-on: ubuntu-latest
