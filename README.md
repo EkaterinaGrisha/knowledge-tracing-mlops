@@ -18,7 +18,20 @@
   по подгруппам), ограничения и риски модели `kt-dkt`;
 - [Жизненный цикл модели и workflow согласования](docs/model_lifecycle.md) —
   BPMN-процесс: от задачи через обучение, проверки, ревью и согласование до
-  продвижения в рабочую версию и мониторинга.
+  продвижения в рабочую версию и мониторинга;
+- [CHANGELOG](CHANGELOG.md) — что изменилось в версии 2.0.0 по сравнению с
+  исходной.
+
+**Быстрый старт** (Python 3.11, [Poetry](https://python-poetry.org/) 2.x):
+
+```bash
+make install       # окружение .venv строго по poetry.lock + git-хуки
+make test          # тесты с отчётом о покрытии
+make train-quick   # пайплайн на закоммиченной выборке (~1 минута)
+make predict       # P(correct) по навыкам для examples/history.csv
+```
+
+Подробности — в [приложении Б](#приложение-б-воспроизведение-результатов).
 
 ---
 
@@ -1041,6 +1054,7 @@ Workflow срабатывает на каждый push в любую ветку 
 knowledge-tracing-mlops/
 ├── README.md                       # настоящий отчёт
 ├── MODEL_CARD.md                   # карточка модели kt-dkt (DKT+Optuna)
+├── CHANGELOG.md                    # изменения версий
 ├── pyproject.toml                  # пакет и зависимости (Poetry), настройки pytest, coverage, ruff, mypy
 ├── poetry.lock                     # точные версии всех пакетов
 ├── poetry.toml                     # .venv создаётся внутри проекта
