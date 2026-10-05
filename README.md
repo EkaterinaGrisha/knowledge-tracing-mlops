@@ -1,8 +1,11 @@
 # Автоматизация ML-пайплайна: knowledge tracing на ASSISTments 2009
 
+[![CI](https://github.com/EkaterinaGrisha/knowledge-tracing-mlops/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/EkaterinaGrisha/knowledge-tracing-mlops/actions/workflows/ci.yml)
+
 **Автор:** Григорьева Е.С.
 
-**Дата:** май 2026
+**Дата:** май 2026 — версия 1.0 (исходный проект); октябрь 2026 — версия
+2.0.0, подготовка к production ([отчёт по практике](REPORT.md))
 
 **Репозиторий:** <https://github.com/EkaterinaGrisha/knowledge-tracing-mlops>
 
@@ -12,8 +15,10 @@
 > Исходный репозиторий не изменяется; история коммитов перенесена полностью,
 > исходное состояние отмечено тегом `v1.0.0-baseline`.
 
-**Документация модели:**
+**Документация:**
 
+- [Отчёт по практике](REPORT.md) — подготовка проекта к production: что
+  сделано по каждому пункту задания, тесты hh.ru, как проверить;
 - [Model Card](MODEL_CARD.md) — назначение, данные, качество (в том числе
   по подгруппам), ограничения и риски модели `kt-dkt`;
 - [Жизненный цикл модели и workflow согласования](docs/model_lifecycle.md) —
@@ -27,7 +32,7 @@
 ```bash
 make install       # окружение .venv строго по poetry.lock + git-хуки
 make test          # тесты с отчётом о покрытии
-make train-quick   # пайплайн на закоммиченной выборке (~1 минута)
+make train-quick   # пайплайн на закоммиченной выборке (~30 секунд)
 make predict       # P(correct) по навыкам для examples/history.csv
 ```
 
@@ -592,7 +597,7 @@ Registry. Файловое хранилище `./mlruns` в MLflow 3 перев�
 командой `make mlflow` (`mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
 --port 5000`) или через `docker compose up mlflow` и открывается на
 `http://localhost:5000`. Скриншоты, сделанные на текущем
-прогоне, приведены в §10 и сохранены в директории `reports/screenshots/`.
+прогоне, приведены в §9.4 и сохранены в директории `reports/screenshots/`.
 
 ### 8.5 Упаковка, регистрация и использование модели
 
@@ -816,7 +821,7 @@ pytest                   # полный набор
 ```
 
 На текущей среде быстрый прогон проходит 49 тестов за несколько секунд; полный
-набор из 52 тестов занимает около 20 секунд. CI запускает полный набор на
+набор из 53 тестов занимает около 30 секунд. CI запускает полный набор на
 каждый push, а локальный git-хук `pre-push` — быстрый прогон перед каждой
 отправкой. Покрытие пакета тестами (строки и ветвления) — 96 %; CI и
 `make test` завершаются ошибкой при покрытии ниже 90 %.
@@ -1078,7 +1083,9 @@ knowledge-tracing-mlops/
 │   └── processed/                  # выход стадии Load (не в репозитории)
 ├── examples/history.csv            # пример истории студентов для kt predict
 ├── notebooks/train.ipynb           # пошаговый прогон пайплайна (без выводов ячеек)
+├── REPORT.md                       # отчёт по практике: подготовка к production
 ├── docs/
+│   ├── hh_tests/                   # результаты тестов hh.ru (PNG, PDF, таблица)
 │   ├── model_lifecycle.md          # BPMN-процесс жизненного цикла и согласования
 │   ├── bpmn/                       # model_lifecycle.bpmn (BPMN 2.0) + экспорт SVG/PNG
 │   └── baseline/                   # эталонные метрики для регрессионной проверки
@@ -1107,7 +1114,7 @@ knowledge-tracing-mlops/
 │   ├── models/                     # base (интерфейс), registry, bkt, dkt, dkt_optuna, automl_flaml
 │   ├── evaluation/                 # metrics, visualize
 │   └── monitoring/                 # data_quality, drift, resources
-├── tests/                          # 52 теста pytest (3 медленных), покрытие пакета 96 %
+├── tests/                          # 53 теста pytest (4 медленных), покрытие пакета 96 %
 ├── artifacts/                      # результаты прогонов: метрики, графики, модель (не в репозитории)
 └── mlruns/                         # хранилище MLflow: mlflow.db + артефакты (не в репозитории)
 ```

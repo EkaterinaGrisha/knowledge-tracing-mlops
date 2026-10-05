@@ -29,6 +29,7 @@
   (`docs/model_lifecycle.md`, `docs/bpmn/`), шаблон Pull Request, `CODEOWNERS`.
 - Регрессионная проверка `scripts/compare_metrics.py` и эталон
   `docs/baseline/`.
+- Отчёт по практике `REPORT.md` и результаты тестов hh.ru (`docs/hh_tests/`).
 - Тесты конфигурации, инференса, реестра, CLI (включая сквозной прогон
   train → регистрация → predict → promote); порог покрытия 90 % в CI.
 
@@ -56,7 +57,9 @@
 - Недостижимая функция `write_sample` и неверная подсказка при отсутствии
   sample-датасета.
 - Неточности в документации: обрезка истории оставляет первые 200 попыток;
-  диапазон learning rate в поиске Optuna — [1e-3, 2e-2].
+  диапазон learning rate в поиске Optuna — [1e-3, 2e-2]; ссылка на раздел со
+  скриншотами MLflow; команда запуска в `docs/baseline/README.md`; пути в
+  HTML-презентации; число тестов в README.
 
 ### Удалено
 
