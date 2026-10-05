@@ -5,14 +5,12 @@
 автоматическое обучение и проверки, согласование, продвижение в рабочую
 версию и мониторинг.
 
-- **Диаграмма (источник):** [`bpmn/model_lifecycle.bpmn`](bpmn/model_lifecycle.bpmn) —
-  BPMN 2.0 XML; открывается и редактируется в
-  [Camunda Modeler](https://camunda.com/download/modeler/) или на
-  [demo.bpmn.io](https://demo.bpmn.io/).
-- **Изображение:** [`bpmn/model_lifecycle.svg`](bpmn/model_lifecycle.svg)
-  (и `.png`) — экспорт тем же рендерером bpmn-io.
+Диаграмма — [`bpmn/model_lifecycle.bpmn`](bpmn/model_lifecycle.bpmn)
+(BPMN 2.0, открывается в [Camunda Modeler](https://camunda.com/download/modeler/)
+или на [demo.bpmn.io](https://demo.bpmn.io/)), изображение —
+[`bpmn/model_lifecycle.png`](bpmn/model_lifecycle.png).
 
-![BPMN: жизненный цикл модели](bpmn/model_lifecycle.svg)
+![BPMN: жизненный цикл модели](bpmn/model_lifecycle.png)
 
 ## Участники (дорожки)
 
@@ -51,14 +49,14 @@
 | 5 | Оценить на тесте: метрики, дрейф, графики | сервисная задача | Пайплайн | one-step-ahead, метрики одной функцией | `evaluation/metrics.py`, `monitoring/drift.py`, `artifacts/metrics.json` |
 | 6 | AUC модели не ниже порога? | исключающий шлюз | Пайплайн | test AUC ≥ `serving.min_test_auc` (0.75); smoke-прогоны (`kt train --quick`) не регистрируются | `pipeline.package_model` |
 | 7 | Зарегистрировать версию в MLflow (challenger) | сервисная задача | Пайплайн | новая версия `kt-dkt` с алиасом `challenger` и тегами `test_auc`, `data_source` | `tracking.mark_challenger` |
-| 8 | Обновить Model Card, открыть Pull Request | пользовательская задача | Data Scientist | карточка отражает новую версию | `MODEL_CARD.md`, чек-лист `.github/pull_request_template.md` |
+| 8 | Обновить Model Card, открыть Pull Request | пользовательская задача | Data Scientist | карточка отражает новую модель | `MODEL_CARD.md`, Pull Request в `main` |
 | 9 | pre-commit, pytest с покрытием, Docker smoke | сервисная задача | CI | ruff, mypy, тесты, покрытие ≥ 90 %, образ запускает `kt train --quick` | `.github/workflows/ci.yml` |
 | 10 | Проверки пройдены? | исключающий шлюз | CI | все проверки зелёные | обязательные статусы `lint-and-test` и `docker-smoke` в защите ветки `main` |
-| 11 | Code review и model review | пользовательская задача | Ревьюер | регрессия против `docs/baseline/` (`scripts/compare_metrics.py`), метрики не хуже `champion`, Model Card обновлена | ревью Pull Request, `CODEOWNERS` |
+| 11 | Code review и model review | пользовательская задача | Ревьюер | регрессия против `docs/baseline/` (`scripts/compare_metrics.py`), метрики не хуже `champion`, Model Card обновлена | ревью Pull Request |
 | 12 | Одобрено? | исключающий шлюз | Ревьюер | approve или request changes | ревью Pull Request на GitHub |
 | 13 | Согласовать по Model Card | пользовательская задача | Владелец продукта | назначение, ограничения и риски приемлемы для использования | разделы 2, 7 и 8 `MODEL_CARD.md` |
 | 14 | Согласовано? | исключающий шлюз | Владелец продукта | решение по Pull Request | одобрение или отклонение Pull Request |
-| 15 | Слить PR в `main`, поставить тег версии | пользовательская задача | Ревьюер | слияние только после зелёного CI | merge на GitHub, тег `vX.Y.Z`, GitHub Release |
+| 15 | Слить PR в `main`, поставить тег версии | пользовательская задача | Ревьюер | слияние только после зелёного CI | merge Pull Request на GitHub, git-тег |
 | 16 | `kt promote`: challenger → champion | сервисная задача | Эксплуатация | алиас `champion` переходит на одобренную версию | `kt promote` → `tracking.promote` |
 | 17 | Не хуже текущего champion? | исключающий шлюз | Эксплуатация | test AUC `challenger` ≥ test AUC `champion`, иначе отказ (код выхода 4); `--force` — осознанное исключение | `tracking.promote` |
 | 18 | Использовать модель | сервисная задача | Эксплуатация | P(correct) по каждому навыку из истории студента | `kt predict --model models:/kt-dkt@champion`, Docker-образ |
@@ -83,12 +81,10 @@
   (`kt train` завершается с кодом 3), порог регистрации (модель ниже порога
   не становится `challenger`), CI (Pull Request нельзя слить), правило
   продвижения (`kt promote` завершается с кодом 4).
-- **Ручные шлюзы** — ревью Pull Request по шаблону с чек-листом и
-  согласование по Model Card.
+- **Ручные шлюзы** — ревью Pull Request и согласование по Model Card.
 - **Трассируемость.** Каждая версия в реестре связана с запуском MLflow
   (параметры, метрики, графики, отчёты мониторинга), с тегом git и с
   описанием в `MODEL_CARD.md`.
 - **Роли в учебном репозитории.** Здесь все человеческие роли совмещает
   автор; GitHub не засчитывает одобрение собственного Pull Request, поэтому
-  обязательное число одобрений в защите ветки не задано, а ревью фиксируется
-  чек-листом шаблона.
+  обязательное число одобрений в защите ветки не задано.
