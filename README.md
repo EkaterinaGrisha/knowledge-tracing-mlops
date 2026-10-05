@@ -121,8 +121,8 @@ Knowledge tracing — задача из области образователь�
 | 4 | AutoML (FLAML) | автоматический выбор модели и гиперпараметров на табличных признаках | автоматизация всего цикла моделирования |
 
 Все четыре модели обучаются и оцениваются в рамках единого пайплайна,
-оркеструемого модулем `src/pipeline.py`. Результаты сравниваются на одном и том
-же тестовом наборе и логируются в MLflow.
+оркеструемого модулем `src/knowledge_tracing/pipeline.py` (команда `kt train`).
+Результаты сравниваются на одном и том же тестовом наборе и логируются в MLflow.
 
 ---
 
@@ -134,7 +134,7 @@ Knowledge tracing — задача из области образователь�
 один из самых распространённых датасетов в задачах knowledge tracing. Данные
 загружаются с зеркала, поддерживаемого репозиторием DKVMN, в *triplet*-формате
 (одному студенту соответствуют три строки: длина истории, список идентификаторов
-навыков, список меток корректности). Модуль `src/etl/extract.py` загружает
+навыков, список меток корректности). Модуль `src/knowledge_tracing/etl/extract.py` загружает
 файлы train и test (по умолчанию с ретраями и экспоненциальной задержкой при
 сетевых ошибках), парсит их в плоский «длинный» (tidy) DataFrame со схемой:
 
@@ -188,6 +188,7 @@ flowchart LR
     A[Extract<br/>скачивание ASSISTments<br/>или sample CSV] --> B[Transform<br/>очистка · признаки<br/>сплит по студентам]
     B --> C[Load<br/>parquet + stats]
     C --> DQ{Data Quality<br/>gate}
+    DQ -- провал --> X[Остановка<br/>DataQualityError]
     DQ --> D[BKT<br/>EM baseline]
     DQ --> E[DKT<br/>LSTM]
     DQ --> F[DKT + Optuna<br/>авто-HPO]
@@ -195,22 +196,30 @@ flowchart LR
     D & E & F & G --> H[Evaluate<br/>AUC / ACC / F1 / RMSE]
     H --> I[Visualize<br/>графики]
     H --> J[Drift + Resources<br/>monitoring]
+    H --> P[Package<br/>модель DKT+Optuna]
+    P --> R{AUC ≥ порога?}
+    R -- да --> M[(MLflow Model Registry<br/>alias challenger)]
     I & J --> K[(MLflow<br/>tracking)]
-    H --> L[reports/metrics.json]
+    H --> L[artifacts/metrics.json]
 ```
 
 Логические слои реализации:
 
+Код оформлен как устанавливаемый пакет `knowledge_tracing` (src-layout);
+пути модулей ниже указаны относительно `src/knowledge_tracing/`.
+
 | Слой | Файлы | Назначение |
 |---|---|---|
-| Конфигурация | `config/config.yaml` | единая точка задания гиперпараметров и путей |
-| ETL | `src/etl/{extract,transform,load,run}.py` | подготовка данных |
-| Модели | `src/models/{bkt,dkt,dkt_optuna,automl_flaml}.py` | четыре независимые реализации |
-| Оценка | `src/evaluation/{metrics,visualize}.py` | метрики и графики |
-| Мониторинг | `src/monitoring/{data_quality,drift,resources}.py` | гейт качества, дрейф, ресурсы |
-| Оркестрация | `src/pipeline.py` | склейка слоёв в один проход |
-| Презентация | `src/presentation/build_deck.py` | автогенерация PPTX |
-| Утилиты | `src/utils.py` | загрузка конфига, логирование, разрешение путей |
+| Конфигурация | `config/config.yaml`, `config/quick.yaml`, `config.py` | гиперпараметры и пути; схема pydantic проверяет конфигурацию при загрузке |
+| ETL | `etl/{extract,transform,load,run,datasets}.py` | подготовка данных и их представления для моделей |
+| Модели | `models/{base,registry,bkt,dkt,dkt_optuna,automl_flaml}.py` | общий интерфейс `KnowledgeTracingModel` и четыре реализации |
+| Оценка | `evaluation/{metrics,visualize}.py` | метрики и графики |
+| Мониторинг | `monitoring/{data_quality,drift,resources}.py` | гейт качества, дрейф, ресурсы |
+| Оркестрация | `pipeline.py` | стадии пайплайна в одном запуске MLflow |
+| Трекинг и реестр | `tracking.py` | хранилище MLflow, алиасы `challenger` / `champion` |
+| Инференс | `inference.py` | упаковка модели DKT, предсказания по истории студента |
+| Командная строка | `cli.py`, `runtime.py`, `logging_setup.py` | команда `kt`, настройки платформы, логирование |
+| Презентация | `scripts/build_deck.py` (вне пакета) | автогенерация PPTX |
 
 Такое разделение преследует две цели. Во-первых, каждый слой можно протестировать
 изолированно. Во-вторых, переход от учебного проекта к
@@ -222,9 +231,9 @@ flowchart LR
 
 ## 5. Слой ETL: извлечение, преобразование, загрузка
 
-### 5.1 Extract — `src/etl/extract.py`
+### 5.1 Extract — `src/knowledge_tracing/etl/extract.py`
 
-Функция `extract(cfg, data_source)` загружает данные одного из двух источников
+Функция `extract(cfg.data, data_source)` загружает данные одного из двух источников
 в зависимости от значения аргумента:
 
 - `data_source="full"` — скачивает файлы `assist2009_updated_train.csv` и
@@ -240,7 +249,7 @@ flowchart LR
 `(user_id, order_idx, skill_id, correct)`. Для тестового файла используется
 смещение `user_offset` для исключения совпадения идентификаторов с обучающим.
 
-### 5.2 Transform — `src/etl/transform.py`
+### 5.2 Transform — `src/knowledge_tracing/etl/transform.py`
 
 Стадия преобразования выполняет последовательно несколько операций:
 
@@ -254,7 +263,7 @@ flowchart LR
    осмысленную причинную историю.
 
 3. **Обрезка длинных последовательностей.** Если длина истории превышает
-   `max_seq_len = 200`, она обрезается до последних 200 шагов. Это ограничивает
+   `max_seq_len = 200`, сохраняются первые 200 шагов. Это ограничивает
    потребление памяти при обучении DKT и не несёт существенной потери
    информации.
 
@@ -264,7 +273,7 @@ flowchart LR
 
 5. **Сплит по студентам.** В случайном порядке студенты делятся на три
    непересекающихся множества: train (≈70%), val (≈10%), test (≈20%).
-   Сплит фиксируется через seed (`cfg["seed"] = 42`). Сплит по студентам, а
+   Сплит фиксируется через seed (`seed: 42` в `config.yaml`). Сплит по студентам, а
    не по строкам, гарантирует, что прошлое одного и того же студента не
    попадёт одновременно в обучающую и тестовую выборки — это ключевая мера
    против leakage в задачах knowledge tracing.
@@ -273,10 +282,13 @@ flowchart LR
    восемь признаков, описанных в §6.
 
 7. **Построение последовательностей.** Функция `build_sequences(long, split)`
-   формирует для каждого студента две параллельные NumPy-последовательности
-   индексов навыков и меток корректности — формат, используемый BKT и DKT.
+   (`etl/datasets.py`) формирует для каждого студента объект `StudentSequence`
+   с двумя параллельными NumPy-массивами — индексов навыков и меток
+   корректности; этот формат используют BKT и DKT. `build_training_data`
+   собирает для train / val / test оба представления данных: последовательности
+   и табличные признаки.
 
-### 5.3 Load — `src/etl/load.py`
+### 5.3 Load — `src/knowledge_tracing/etl/load.py`
 
 Стадия загрузки сохраняет обработанные данные в `data/processed/`:
 
@@ -325,7 +337,7 @@ flowchart LR
 В пайплайне реализованы четыре модели; ниже описана природа каждой, её
 гиперпараметры и роль в эксперименте.
 
-### 7.1 BKT (Bayesian Knowledge Tracing) — `src/models/bkt.py`
+### 7.1 BKT (Bayesian Knowledge Tracing) — `src/knowledge_tracing/models/bkt.py`
 
 BKT — это скрытая марковская модель с двумя состояниями: «навык не освоен» (0)
 и «навык освоен» (1). Динамика и наблюдение описываются четырьмя параметрами:
@@ -348,7 +360,7 @@ BKT — это скрытая марковская модель с двумя с
 не требует GPU, обучается за секунды, и её результат — нижняя граница, ниже
 которой ни одна более сложная модель не должна опускаться.
 
-### 7.2 DKT (Deep Knowledge Tracing) — `src/models/dkt.py`
+### 7.2 DKT (Deep Knowledge Tracing) — `src/knowledge_tracing/models/dkt.py`
 
 DKT представляет состояние знаний как скрытое состояние рекуррентной сети.
 Архитектура — `Embedding → LSTM → Linear`:
@@ -379,7 +391,7 @@ DKT представляет состояние знаний как скрыто
 Реализация работает на CPU; при наличии GPU/MPS функция `pick_device()`
 автоматически выбирает соответствующее устройство.
 
-### 7.3 DKT с автоматическим подбором архитектуры (Optuna) — `src/models/dkt_optuna.py`
+### 7.3 DKT с автоматическим подбором архитектуры (Optuna) — `src/knowledge_tracing/models/dkt_optuna.py`
 
 Чтобы автоматизировать архитектурный поиск, поверх DKT построен слой подбора
 гиперпараметров на базе **Optuna**, использующего *Tree-structured Parzen
@@ -407,7 +419,7 @@ lr = 0.00286, batch_size = 32
 
 Эта модель и заняла первое место в сводной таблице результатов.
 
-### 7.4 AutoML на табличных признаках (FLAML) — `src/models/automl_flaml.py`
+### 7.4 AutoML на табличных признаках (FLAML) — `src/knowledge_tracing/models/automl_flaml.py`
 
 Для сравнения с подходом, где автоматизирован весь цикл моделирования,
 используется фреймворк **FLAML** (Fast Lightweight AutoML, разработка
@@ -421,11 +433,16 @@ Microsoft Research). FLAML получает на вход табличные п�
 В текущем прогоне FLAML выбрал **xgboost** со следующими гиперпараметрами:
 
 ```
-n_estimators = 5123, max_leaves = 511,
-min_child_weight = 0.37, learning_rate = 0.0011,
-subsample = 1.0, colsample_bylevel = 0.74, colsample_bytree = 0.63,
-reg_alpha = 0.011, reg_lambda = 0.0020
+n_estimators = 867, max_leaves = 362,
+min_child_weight = 1.25, learning_rate = 0.0076,
+subsample = 0.84, colsample_bylevel = 0.90, colsample_bytree = 0.92,
+reg_alpha = 0.0053, reg_lambda = 0.077
 ```
+
+FLAML всегда расходует весь бюджет времени, поэтому число испытаний и
+выбранная конфигурация зависят от скорости компьютера: в исходной версии
+проекта тот же поиск остановился на другой конфигурации xgboost с близким
+качеством (AUC 0.7914 против 0.7919).
 
 Роль AutoML в проекте — продемонстрировать, что результат, сопоставимый со
 специализированной нейросетевой моделью, может быть получен полностью
@@ -439,9 +456,12 @@ reg_alpha = 0.011, reg_lambda = 0.0020
 2. **Поиск архитектуры нейросети** — `Optuna` поверх DKT (пять гиперпараметров,
    TPE-сэмплер, 25 trials).
 3. **Цикл «ETL → 4 модели → оценка → визуализация → логирование»** — единый
-   запуск `python -m src.pipeline`, без какого-либо ручного вмешательства между
+   запуск `kt train`, без какого-либо ручного вмешательства между
    стадиями. Один и тот же запуск воспроизводимо порождает метрики, графики,
    MLflow-логи и JSON-сводку.
+4. **Упаковка и регистрация модели** — лучшая модель (DKT+Optuna)
+   сохраняется и, если проходит порог качества, регистрируется в MLflow Model
+   Registry; продвижение в рабочую версию выполняет `kt promote` (§8.5).
 
 ---
 
@@ -450,7 +470,7 @@ reg_alpha = 0.011, reg_lambda = 0.0020
 В проекте реализованы три независимых механизма
 мониторинга, и все они логируются в MLflow.
 
-### 8.1 Data-quality gate — `src/monitoring/data_quality.py`
+### 8.1 Data-quality gate — `src/knowledge_tracing/monitoring/data_quality.py`
 
 Перед обучением выполняется набор быстрых проверок на чистоту таблицы:
 
@@ -464,13 +484,16 @@ reg_alpha = 0.011, reg_lambda = 0.0020
 
 Если все проверки прошли, в MLflow логируется метрика
 `data_quality_passed = 1`, и пайплайн продолжает работу. Если хотя бы одна
-проверка не прошла, факт фиксируется как предупреждение, а полный отчёт
-сохраняется как артефакт `monitoring/data_quality.json` — это позволяет
-расследовать инцидент даже после завершения прогона.
+проверка не прошла, полный отчёт сохраняется как артефакт
+`monitoring/data_quality.json`, после чего пайплайн **останавливается**
+(`DataQualityError`; команда `kt` завершается с кодом 3, запуск MLflow
+помечается как FAILED) — модели не обучаются на данных, нарушающих схему, а
+отчёт позволяет расследовать инцидент. Режим «только предупредить» включается
+флагом `monitoring.fail_on_data_quality: false`.
 
 В текущем прогоне `data_quality_passed = True` (все пять проверок прошли).
 
-### 8.2 Мониторинг дрейфа данных — `src/monitoring/drift.py`
+### 8.2 Мониторинг дрейфа данных — `src/knowledge_tracing/monitoring/drift.py`
 
 Для контроля сдвига распределений признаков между обучающей и тестовой
 выборками (или, в производственном режиме, — между обучающей и текущим
@@ -494,7 +517,7 @@ production-батчем) рассчитываются два независим�
 что значительно ниже порога 0.10. Полный JSON-отчёт сохраняется как
 артефакт `monitoring/drift_report.json`.
 
-### 8.3 Мониторинг инфраструктуры — `src/monitoring/resources.py`
+### 8.3 Мониторинг инфраструктуры — `src/knowledge_tracing/monitoring/resources.py`
 
 Класс `ResourceMonitor` оборачивает каждую стадию обучения как контекстный
 менеджер; в фоновом потоке с интервалом 0.5 секунды он семплирует:
@@ -504,7 +527,7 @@ production-батчем) рассчитываются два независим�
 - мгновенную загрузку CPU (`avg_cpu_pct` — среднее по выборке).
 
 После выхода из контекста фиксируется общее время выполнения (`elapsed_s`).
-Результаты по каждой модели сохраняются в `reports/metrics.json` и логируются
+Результаты по каждой модели сохраняются в `artifacts/metrics.json` и логируются
 в MLflow в виде метрик `bkt__elapsed_s`, `bkt__peak_rss_mb`, `bkt__avg_cpu_pct`
 и аналогичных для остальных моделей — это даёт возможность сопоставить
 качество модели и стоимость её обучения в едином интерфейсе.
@@ -513,12 +536,12 @@ production-батчем) рассчитываются два независим�
 
 | Стадия | Время, с | Пиковая RSS, MB | Средняя загрузка CPU, % |
 |---|---|---|---|
-| BKT | 13.5 | 587.7 | 98.9 |
-| DKT | 63.7 | 625.8 | 99.3 |
-| DKT + Optuna | 712.6 | 298.3 | 99.5 |
-| AutoML (FLAML) | 617.8 | 2388.8 | 396.4 |
+| BKT | 12.9 | 686.2 | 99.4 |
+| DKT | 63.4 | 783.5 | 99.6 |
+| DKT + Optuna | 676.2 | 886.5 | 99.8 |
+| AutoML (FLAML) | 601.3 | 3728.2 | 579.1 |
 
-Загрузка CPU AutoML превышает 100% и достигает ~400% — это закономерно:
+Загрузка CPU AutoML превышает 100% и достигает ~580% — это закономерно:
 LightGBM и XGBoost используют многопоточный backend, и `psutil` корректно
 суммирует утилизацию по ядрам. Пиковая память AutoML существенно выше, чем у
 других моделей, поскольку FLAML обучает в течение бюджета десятки конкурирующих
@@ -536,15 +559,47 @@ LightGBM и XGBoost используют многопоточный backend, и 
   `recall`, `rmse`, `log_loss`, `n` (размер тестовой выборки); ресурсы
   (`elapsed_s`, `peak_rss_mb`, `avg_cpu_pct`); итоговая метрика прохождения
   data-quality gate; лучшая валидационная AUC, найденная Optuna.
-- **Артефакты:** PNG-графики (`reports/figures/*.png`), JSON-отчёты по
+- **Артефакты:** PNG-графики (`figures/*.png`), JSON-отчёты по
   мониторингу (`data_quality.json`, `drift_report.json`),
-  сводка `metrics.json` и сама обученная модель FLAML (с автоматически
-  сгенерированными `MLmodel`, `conda.yaml`, `requirements.txt`, `model.pkl`).
+  сводка `metrics.json`, упакованная модель DKT+Optuna (pyfunc-модель с
+  весами, кодом пакета и зафиксированными версиями библиотек, §8.5) и модель
+  FLAML, которую логирует встроенная интеграция FLAML с MLflow.
 
-UI MLflow запускается локально командой `mlflow ui --backend-store-uri
-file:./mlruns --port 5000` (или через `docker compose up mlflow`) и
-открывается на `http://localhost:5000`. Скриншоты, сделанные на текущем
+Хранилище MLflow — SQLite (`mlruns/mlflow.db`): оно хранит запуски и Model
+Registry. Файловое хранилище `./mlruns` в MLflow 3 переведено в режим
+поддержки и требовало флага `MLFLOW_ALLOW_FILE_STORE`. UI MLflow запускается
+командой `make mlflow` (`mlflow ui --backend-store-uri sqlite:///mlruns/mlflow.db
+--port 5000`) или через `docker compose up mlflow` и открывается на
+`http://localhost:5000`. Скриншоты, сделанные на текущем
 прогоне, приведены в §10 и сохранены в директории `reports/screenshots/`.
+
+### 8.5 Упаковка, регистрация и использование модели
+
+Пайплайн завершается стадией упаковки (`package_model` в `pipeline.py`):
+
+1. Модель, указанная в `serving.model` (DKT+Optuna), сохраняется в
+   `artifacts/model/`: веса сети (`model.pt`) и описание (`model.json` —
+   архитектура, соответствие исходных идентификаторов навыков индексам,
+   метаданные прогона и тестовые метрики).
+2. Та же модель логируется в MLflow как pyfunc-модель.
+3. **Шлюз качества.** Если AUC на тесте не ниже `serving.min_test_auc`
+   (0.75), модель регистрируется в MLflow Model Registry как новая версия
+   `kt-dkt` с алиасом `challenger`; иначе регистрация не выполняется.
+   Smoke-прогоны (`kt train --quick`) модель сохраняют, но не регистрируют:
+   сокращённые бюджеты не дают кандидата в рабочие версии.
+4. **Продвижение** в рабочую версию — отдельный шаг после согласования:
+   `kt promote` переносит алиас `champion` на текущего `challenger` и
+   отказывает (код выхода 4), если его тестовый AUC ниже, чем у действующего
+   `champion`.
+
+Модель используется командой `kt predict`: по истории ответов студентов
+(CSV с колонками `user_id, order_idx, skill_id, correct`) она возвращает
+вероятность правильного ответа на следующую попытку по каждому навыку:
+
+```bash
+kt predict --input examples/history.csv                                 # локальная модель
+kt predict --model models:/kt-dkt@champion --input examples/history.csv  # из реестра MLflow
+```
 
 ---
 
@@ -554,14 +609,21 @@ file:./mlruns --port 5000` (или через `docker compose up mlflow`) и
 ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 109 навыков, сплит
 70 / 10 / 20 по студентам, протокол one-step-ahead).
 
+Результаты получены полным прогоном `kt train --data-source full` текущей
+версии кода (пакет `knowledge-tracing` 2.0.0) и опубликованы в
+`reports/metrics.json`. BKT и DKT воспроизвели результаты исходной версии
+проекта (тег `v1.0.0-baseline`) по всем метрикам до четвёртого знака;
+DKT+Optuna — тот же AUC при немного иной найденной конфигурации; AutoML
+отличается в пределах, ожидаемых при бюджете по времени.
+
 ### 9.1 Сводная таблица метрик качества
 
 | Модель | AUC | Accuracy | F1 | Precision | Recall | RMSE | log-loss | n |
 |---|---|---|---|---|---|---|---|---|
 | BKT | 0.7200 | 0.7046 | 0.7888 | 0.7228 | 0.8682 | 0.4440 | 0.5791 | 45 353 |
 | DKT | 0.8015 | 0.7504 | 0.8175 | 0.7648 | 0.8780 | 0.4129 | 0.5161 | 44 581 |
-| **DKT + Optuna** | **0.8036** | **0.7511** | **0.8197** | 0.7610 | **0.8882** | **0.4116** | **0.5109** | 44 581 |
-| AutoML (xgboost) | 0.7914 | 0.7455 | 0.8173 | 0.7513 | 0.8960 | 0.4149 | 0.5162 | 45 353 |
+| **DKT + Optuna** | **0.8036** | **0.7525** | **0.8195** | **0.7650** | 0.8824 | **0.4110** | **0.5106** | 44 581 |
+| AutoML (xgboost) | 0.7919 | 0.7455 | 0.8170 | 0.7523 | **0.8938** | 0.4146 | 0.5153 | 45 353 |
 
 ### 9.2 Интерпретация
 
@@ -576,8 +638,8 @@ ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 
   dropout = 0.49`) отличается от исходной как структурой, так и сильным
   dropout, что говорит о склонности рекуррентной модели к переобучению на
   данном наборе и об эффективности регуляризации.
-- **AutoML на табличных признаках** показал AUC 0.7914, что выше BKT на
-  +0.071, но ниже специализированной DKT на 0.010. Этот результат интересен
+- **AutoML на табличных признаках** показал AUC 0.7919, что выше BKT на
+  +0.072, но ниже специализированной DKT на 0.010. Этот результат интересен
   тем, что получен без какой-либо ручной настройки и без рекуррентной
   архитектуры — только за счёт автоматического выбора xgboost-конфигурации на
   восьми инженерных признаках. Это подтверждает наблюдение, что хорошо
@@ -585,7 +647,7 @@ ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 
   специализированной моделью последовательностей и универсальным табличным
   AutoML.
 - **Лучшая модель — DKT + Optuna** по большинству метрик (AUC, Accuracy, F1,
-  RMSE, log-loss); по Precision лидирует DKT, по Recall — AutoML. Полученная
+  Precision, RMSE, log-loss); по Recall лидирует AutoML. Полученная
   AUC 0.804 соответствует уровню, ожидаемому для DKT-моделей на
   ASSISTments 2009 согласно публикациям предметной области.
 
@@ -601,7 +663,13 @@ ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 
 
 ### 9.4 Снимки MLflow UI
 
-Иллюстрации ниже фиксируют состояние UI MLflow после описанного прогона.
+Снимки сделаны на исходной версии проекта (тег `v1.0.0-baseline`,
+файловое хранилище MLflow), поэтому значения ресурсов на них относятся к
+исходному прогону. Текущая версия хранит запуски в SQLite (`make mlflow`);
+интерфейс тот же, и в нём дополнительно доступен Model Registry с моделью
+`kt-dkt`.
+
+Иллюстрации ниже фиксируют состояние UI MLflow после исходного прогона.
 Полный набор из 14 скриншотов доступен в `reports/screenshots/`.
 
 ![Список запусков MLflow](reports/screenshots/01_mlflow_runs_list.png)
@@ -642,8 +710,10 @@ JSON-отчёты мониторинга в `monitoring/`, сводный `metri
 
 ## 10. Визуализации
 
-Стадия `src/evaluation/visualize.py` строит семь графиков, сохраняемых в
-`reports/figures/` и логируемых в MLflow как артефакты.
+Стадия `src/knowledge_tracing/evaluation/visualize.py` строит семь графиков,
+сохраняемых в `artifacts/figures/` и логируемых в MLflow как артефакты.
+Приведённые в отчёте версии лежат в `reports/figures/` и обновляются
+осознанно командой `make publish-report` — обычный прогон их не перезаписывает.
 
 | Файл | Содержание |
 |---|---|
@@ -697,17 +767,22 @@ BKT — нижняя огибающая.*
 ## 11. Тестирование
 
 Тесты написаны на **pytest** и расположены в каталоге `tests/`. Запуск:
-`pytest` или `make test`. Покрыта функциональность всех ключевых модулей.
+`make test` (с отчётом о покрытии) или `poetry run pytest`. Покрыта
+функциональность всех ключевых модулей.
 
 | Файл | Что проверяется |
 |---|---|
-| `test_etl_extract.py` | парсинг triplet-формата, корректность смещения `user_id` при склейке train + test |
+| `test_etl_extract.py` | парсинг triplet-формата, смещение `user_id` при склейке train + test, загрузка полного датасета с подменой сети (кэширование, повторы при сбоях), `write_sample` |
+| `test_config.py` | валидация конфигурации: опечатка в ключе, недопустимые значения, несовместимые доли сплитов и пороги; оверлей `quick.yaml`; разрешение путей от корня проекта |
 | `test_transform.py` | схема выходного фрейма, дизъюнктность сплитов train / val / test по `user_id`, причинность признаков (отсутствие утечки целевой метки) |
 | `test_metrics.py` | поведение метрик в крайних случаях: идеальный классификатор, случайный классификатор, один класс в y_true |
 | `test_bkt.py` | предсказания BKT лежат в `[0, 1]`, EM-обучение сходится, пер-скилл оценка корректна |
-| `test_monitoring.py` | детекция дрейфа на синтетических данных (PSI и KS), data-quality gate реагирует на нарушение схемы |
-| `test_models_smoke.py` | DKT и FLAML обучаются на маленьком наборе без ошибок (помечен маркером `slow`) |
-| `conftest.py` | общие фикстуры (синтетические данные, временный конфиг) |
+| `test_monitoring.py` | детекция дрейфа на синтетических данных (PSI и KS), data-quality gate реагирует на нарушение схемы и останавливает пайплайн |
+| `test_models_smoke.py` | DKT и FLAML обучаются на маленьком наборе без ошибок (маркер `slow`) |
+| `test_inference.py` | упаковка и загрузка модели, предсказания по каждому навыку в `[0, 1]`, независимость результата от батчинга и порядка строк, неизвестные навыки, некорректный ввод |
+| `test_tracking.py` | правила продвижения версий в реестре MLflow (первый `challenger`, отказ при худшем AUC, `--force`), URI хранилищ |
+| `test_cli.py` | команды `kt`: версия, ETL, коды выхода при ошибке конфигурации и провале data-quality gate; сквозной прогон train → регистрация → predict (локально и из реестра) → promote (маркер `slow`) |
+| `conftest.py` | общие фикстуры: синтетические данные, конфигурация проекта, изолированный корень проекта для CLI-тестов |
 
 Тесты, требующие обучения моделей, помечены маркером `slow` и могут быть
 исключены для быстрого прогона:
@@ -717,9 +792,11 @@ pytest -m "not slow"     # быстро, без обучения моделей
 pytest                   # полный набор
 ```
 
-На текущей среде быстрый прогон проходит 15 тестов за несколько секунд; полный
-прогон занимает около минуты. CI запускает полный набор на каждый push, а
-локальный git-хук `pre-push` — быстрый прогон перед каждой отправкой.
+На текущей среде быстрый прогон проходит 49 тестов за несколько секунд; полный
+набор из 52 тестов занимает около 20 секунд. CI запускает полный набор на
+каждый push, а локальный git-хук `pre-push` — быстрый прогон перед каждой
+отправкой. Покрытие пакета тестами (строки и ветвления) — 96 %; CI и
+`make test` завершаются ошибкой при покрытии ниже 90 %.
 
 ### 11.1 Статический анализ и pre-commit
 
@@ -730,9 +807,9 @@ pytest                   # полный набор
 
 | Инструмент | Что проверяет |
 |---|---|
-| **ruff** (линтер) | pycodestyle, pyflakes, сортировка импортов, pyupgrade, bugbear, simplify, comprehensions, pathlib, pep8-naming, bandit (безопасность), запрет `print` в коде пакета, правила NumPy и Ruff |
+| **ruff** (линтер) | pycodestyle, pyflakes, сортировка импортов, pyupgrade, bugbear, simplify, comprehensions, pathlib, pep8-naming, bandit (безопасность), запрет `print` в коде пакета, docstrings (pydocstyle, Google), правила pylint, NumPy и Ruff |
 | **ruff format** | единый стиль форматирования (замена black), длина строки 100 |
-| **mypy** | статическая проверка типов `src/` и `tests/`; запускается внутри `.venv`, поэтому видит точные версии torch, pandas и их аннотации |
+| **mypy** | статическая проверка типов `src/` и `tests/`, у каждой функции пакета обязательны аннотации; запускается внутри `.venv`, поэтому видит точные версии torch, pandas и их аннотации |
 | **pre-commit-hooks** | лишние пробелы, перевод строки в конце файла, синтаксис YAML/TOML/JSON, маркеры merge-конфликтов, большие файлы (> 1 MB), приватные ключи, забытые отладочные вызовы; запрет коммитов напрямую в `main` |
 | **nbstripout** | удаляет выводы ячеек из ноутбуков перед коммитом — результаты хранятся в `reports/` и MLflow, а не в git-истории ноутбука |
 | **poetry check --lock** | `poetry.lock` соответствует `pyproject.toml` |
@@ -759,7 +836,7 @@ make typecheck   # mypy
 
 ```bash
 docker build -t kt-pipeline:latest .
-docker run --rm kt-pipeline:latest --data-source sample --quick
+docker run --rm kt-pipeline:latest train --data-source sample --quick
 ```
 
 ### 12.1 Разбор Dockerfile
@@ -773,15 +850,16 @@ docker run --rm kt-pipeline:latest --data-source sample --quick
 |---|---|
 | `FROM python:3.11-slim AS builder` | этап сборки зависимостей на компактном официальном образе Python |
 | `pip install "poetry==2.5.1"` | фиксированная версия Poetry — сборка не зависит от выхода новых версий инструмента |
-| `COPY pyproject.toml poetry.lock poetry.toml ./` | в слой зависимостей копируются только файлы-описания окружения, **до** исходников: Docker кэширует слой, и при изменении кода установка не повторяется |
+| `COPY pyproject.toml poetry.lock poetry.toml README.md ./` | в слой зависимостей копируются только файлы-описания окружения, **до** исходников: Docker кэширует слой, и при изменении кода установка не повторяется |
 | `poetry install --only main --no-root` | установка только runtime-зависимостей (без pytest, ruff и т. п.) в `/app/.venv`; на Linux `poetry.lock` указывает CPU-сборку torch из индекса PyTorch — без CUDA-payload (~1 GB) |
+| `COPY src ./src` + `poetry install --only-root` | установка самого пакета `knowledge_tracing` (и команды `kt`) отдельным слоем — изменение кода не переустанавливает зависимости |
 | `FROM python:3.11-slim AS runtime` | итоговый образ: тот же базовый образ, поэтому `.venv` из этапа сборки работает без изменений |
 | `ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MPLBACKEND=Agg PATH=/app/.venv/bin:$PATH` | отключение `.pyc`-файлов; стрим логов без буфера; matplotlib без GUI-бэкенда; интерпретатор берётся из виртуального окружения |
 | `apt-get install libgomp1 && rm -rf /var/lib/apt/lists/*` | установка системной библиотеки OpenMP, требуемой LightGBM; список пакетов apt сразу очищается для уменьшения размера слоя |
 | `useradd --create-home --uid 1000 mluser` + `USER mluser` | непривилегированный пользователь — пайплайн внутри контейнера не работает под root, что снижает риск при компрометации; `.venv` принадлежит root и доступна пользователю только на чтение |
 | `COPY --from=builder /app/.venv /app/.venv` | перенос готового окружения из этапа сборки |
 | `COPY --chown=mluser:mluser . .` | копирование кода и закоммиченного sample-датасета |
-| `ENTRYPOINT ["python", "-m", "src.pipeline"] CMD ["--data-source", "sample"]` | команда по умолчанию запускает пайплайн на закоммиченном sample (полностью офлайн); аргументы CMD можно переопределить при запуске |
+| `ENTRYPOINT ["kt"] CMD ["train", "--data-source", "sample"]` | образ запускает команду `kt`; по умолчанию — пайплайн на закоммиченном sample (полностью офлайн); другие команды передаются аргументами: `docker run kt-pipeline etl ...` |
 
 ### 12.2 Функции контейнеризации в проекте
 
@@ -803,14 +881,15 @@ CUDA-стека). Слой зависимостей кэшируется отд�
 
 **Воспроизводимость.** Один и тот же образ работает локально, в CI на
 Ubuntu и у проверяющего; различия операционной системы и установленных
-библиотек исключены. Результаты пайплайна (`reports/`, `mlruns/`) можно
-сохранить на хост-машину через монтирование томов:
+библиотек исключены. Результаты пайплайна (`artifacts/` — метрики, графики,
+модель; `mlruns/` — хранилище MLflow) можно сохранить на хост-машину через
+монтирование томов:
 
 ```bash
 docker run --rm \
-    -v $(pwd)/reports:/app/reports \
+    -v $(pwd)/artifacts:/app/artifacts \
     -v $(pwd)/mlruns:/app/mlruns \
-    kt-pipeline:latest --data-source sample
+    kt-pipeline:latest train --data-source sample
 ```
 
 ### 12.3 docker-compose
@@ -825,7 +904,7 @@ docker run --rm \
 Команды:
 
 ```bash
-docker compose up pipeline      # один проход пайплайна с записью в reports/ и mlruns/
+docker compose up pipeline      # один проход пайплайна с записью в artifacts/ и mlruns/
 docker compose up mlflow        # UI MLflow на http://localhost:5000
 ```
 
@@ -833,11 +912,12 @@ docker compose up mlflow        # UI MLflow на http://localhost:5000
 
 На macOS arm64 при одновременной работе PyTorch и LightGBM в одном процессе
 возможен сегфолт из-за двойной загрузки OpenMP-рантайма. В проекте применён
-типовой обход — выставление переменных окружения `KMP_DUPLICATE_LIB_OK=TRUE`
-и `OMP_NUM_THREADS=1`. В Makefile эти переменные применяются автоматически в
-целях `make all` и `make all-full`. В Linux-окружении (включая CI) проблема
-не воспроизводится; внутри контейнера переменные можно прокинуть флагом
-`-e KMP_DUPLICATE_LIB_OK=TRUE -e OMP_NUM_THREADS=1`.
+типовой обход — переменные окружения `KMP_DUPLICATE_LIB_OK=TRUE` и
+`OMP_NUM_THREADS=1`. Команда `kt` выставляет их сама на macOS до загрузки
+torch и LightGBM (`src/knowledge_tracing/runtime.py`; явно заданные значения не
+перезаписываются), тесты делают то же в `conftest.py`. В Linux-окружении
+(включая CI и Docker) проблема не воспроизводится, и библиотеки работают с
+настройками по умолчанию.
 
 ---
 
@@ -865,13 +945,14 @@ Workflow срабатывает на каждый push в любую ветку 
    `poetry run pre-commit run --all-files` (ruff, ruff format, mypy,
    nbstripout, гигиена файлов, `poetry check --lock`); окружения хуков
    кэшируются по хешу `.pre-commit-config.yaml`.
-7. Запуск тестов: `poetry run pytest -q` (полный набор включая slow).
+7. Запуск тестов с отчётом о покрытии: `poetry run pytest -q --cov` (полный
+   набор, включая slow; завершается ошибкой при покрытии пакета ниже 90 %).
 
 **Job `docker-smoke`** (зависит от успешного завершения `lint-and-test`):
 
 1. Checkout репозитория.
 2. `docker build -t kt-pipeline:ci .` — сборка образа.
-3. `docker run --rm kt-pipeline:ci --data-source sample --quick` —
+3. `docker run --rm kt-pipeline:ci train --data-source sample --quick` —
    smoke-проход пайплайна внутри собранного образа.
 
 Таким образом, при каждом изменении репозитория автоматически проверяется,
@@ -930,7 +1011,7 @@ Workflow срабатывает на каждый push в любую ветку 
   (dropout 0.49), что указывает на склонность DKT к переобучению на данном
   объёме данных.
 - Табличный AutoML на восьми инженерных причинных признаках достигает
-  AUC 0.7914 — заметно превосходит BKT и уступает специализированной
+  AUC 0.7919 — заметно превосходит BKT и уступает специализированной
   нейросетевой модели всего на 0.010 AUC, что иллюстрирует роль признакового
   пространства в задаче.
 
@@ -947,83 +1028,55 @@ Workflow срабатывает на каждый push в любую ветку 
 ## Приложение А. Структура проекта
 
 ```
-ml-pipeline-knowledge-tracing/
+knowledge-tracing-mlops/
 ├── README.md                       # настоящий отчёт
-├── Dockerfile                      # описание контейнерного образа
-├── docker-compose.yml              # два сервиса: pipeline + mlflow UI
-├── .dockerignore                   # исключения для контекста сборки Docker
-├── pyproject.toml                  # зависимости (Poetry) + настройки pytest, ruff, mypy
-├── .pre-commit-config.yaml         # git-хуки: ruff, mypy, nbstripout, гигиена файлов
+├── pyproject.toml                  # пакет и зависимости (Poetry), настройки pytest, coverage, ruff, mypy
 ├── poetry.lock                     # точные версии всех пакетов
 ├── poetry.toml                     # .venv создаётся внутри проекта
 ├── .python-version                 # версия Python (3.11)
-├── Makefile                        # удобные команды (install, all, test, lint, docker, ...)
+├── .pre-commit-config.yaml         # git-хуки: ruff, mypy, nbstripout, гигиена файлов, pytest на push
+├── Makefile                        # команды: install, lint, test, train, predict, promote, docker, ...
+├── Dockerfile                      # многоэтапная сборка образа (Poetry → .venv → runtime)
+├── docker-compose.yml              # два сервиса: pipeline + MLflow UI
+├── .dockerignore / .gitignore
 ├── .vscode/                        # интерпретатор из .venv, pytest, ruff и mypy в VS Code
-├── .gitignore
-├── .github/
-│   └── workflows/
-│       └── ci.yml                  # GitHub Actions: lint, pytest, docker build + smoke
+├── .github/workflows/ci.yml        # GitHub Actions: pre-commit, pytest + coverage, docker build + smoke
 ├── config/
-│   └── config.yaml                 # все гиперпараметры пайплайна
+│   ├── config.yaml                 # гиперпараметры, пути, MLflow, порог регистрации модели
+│   └── quick.yaml                  # оверлей с минимальными бюджетами (kt train --quick)
 ├── data/
-│   ├── sample/
-│   │   └── assistments_sample.csv  # закоммиченная подвыборка (288 студентов)
-│   ├── raw/                        # кэш скачанных файлов ASSISTments (не в репо)
-│   └── processed/                  # выход стадии Load (parquet, json)
-├── notebooks/
-│   └── train.ipynb                 # ноутбук с пошаговым прогоном пайплайна
-├── presentation/
-│   └── presentation.pptx           # автоматически сгенерированная презентация
-├── reports/
-│   ├── metrics.json                # JSON-сводка последнего прогона
+│   ├── sample/assistments_sample.csv  # закоммиченная подвыборка (288 студентов)
+│   ├── raw/                        # кэш скачанных файлов ASSISTments (не в репозитории)
+│   └── processed/                  # выход стадии Load (не в репозитории)
+├── examples/history.csv            # пример истории студентов для kt predict
+├── notebooks/train.ipynb           # пошаговый прогон пайплайна (без выводов ячеек)
+├── docs/baseline/                  # эталонные метрики для регрессионной проверки
+├── reports/                        # опубликованные результаты (make publish-report)
+│   ├── metrics.json
 │   ├── figures/                    # 7 PNG-графиков
-│   │   ├── dataset_overview.png
-│   │   ├── model_comparison.png
-│   │   ├── roc_comparison.png
-│   │   ├── confusion_matrix.png
-│   │   ├── calibration.png
-│   │   ├── dkt_loss.png
-│   │   └── feature_importance.png
 │   └── screenshots/                # 14 скриншотов MLflow UI
+├── presentation/                   # презентация и текст защиты
 ├── scripts/
-│   ├── run_pipeline.sh             # quick-прогон на sample с защитой OpenMP
-│   └── run_pipeline_full.sh        # full-прогон с защитой OpenMP
-├── src/
-│   ├── __init__.py
-│   ├── pipeline.py                 # оркестратор всего пайплайна
-│   ├── utils.py                    # загрузка конфига, логгер, разрешение путей
-│   ├── etl/
-│   │   ├── __init__.py
-│   │   ├── extract.py              # загрузка triplet-формата → long DataFrame
-│   │   ├── transform.py            # очистка, сплит по студентам, причинные признаки
-│   │   ├── load.py                 # запись parquet + stats
-│   │   └── run.py                  # ETL-only entry point
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── bkt.py                  # BKT, EM-обучение на скрытой марковской модели
-│   │   ├── dkt.py                  # DKT (LSTM)
-│   │   ├── dkt_optuna.py           # подбор архитектуры DKT через Optuna
-│   │   └── automl_flaml.py         # AutoML на табличных признаках через FLAML
-│   ├── evaluation/
-│   │   ├── __init__.py
-│   │   ├── metrics.py              # AUC / ACC / F1 / RMSE / log-loss / precision / recall
-│   │   └── visualize.py            # 7 графиков в едином стиле
-│   ├── monitoring/
-│   │   ├── __init__.py
-│   │   ├── data_quality.py         # пять проверок схемы и качества
-│   │   ├── drift.py                # PSI + KS-тест
-│   │   └── resources.py            # ResourceMonitor (RSS, CPU%, время)
-│   └── presentation/
-│       ├── __init__.py
-│       └── build_deck.py           # автогенерация PPTX
-└── tests/
-    ├── conftest.py
-    ├── test_etl_extract.py
-    ├── test_transform.py
-    ├── test_metrics.py
-    ├── test_bkt.py
-    ├── test_monitoring.py
-    └── test_models_smoke.py
+│   ├── build_deck.py               # автогенерация PPTX из reports/
+│   ├── build_notebook.py           # генерация notebooks/train.ipynb
+│   └── compare_metrics.py          # регрессионная проверка метрик против эталона
+├── src/knowledge_tracing/          # устанавливаемый пакет (poetry install)
+│   ├── __init__.py / __main__.py   # версия пакета; python -m knowledge_tracing
+│   ├── cli.py                      # команда kt: etl, train, predict, promote
+│   ├── config.py                   # типизированная конфигурация (pydantic), пути от корня проекта
+│   ├── pipeline.py                 # стадии пайплайна в одном запуске MLflow
+│   ├── tracking.py                 # хранилище MLflow, реестр, алиасы challenger / champion
+│   ├── inference.py                # упаковка модели DKT и предсказания по истории студента
+│   ├── runtime.py                  # настройки OpenMP для macOS
+│   ├── logging_setup.py            # настройка логирования для точек входа
+│   ├── errors.py                   # исключения пакета
+│   ├── etl/                        # extract, transform, load, run, datasets (StudentSequence)
+│   ├── models/                     # base (интерфейс), registry, bkt, dkt, dkt_optuna, automl_flaml
+│   ├── evaluation/                 # metrics, visualize
+│   └── monitoring/                 # data_quality, drift, resources
+├── tests/                          # 52 теста pytest (3 медленных), покрытие пакета 96 %
+├── artifacts/                      # результаты прогонов: метрики, графики, модель (не в репозитории)
+└── mlruns/                         # хранилище MLflow: mlflow.db + артефакты (не в репозитории)
 ```
 
 ---
@@ -1044,33 +1097,49 @@ ml-pipeline-knowledge-tracing/
 а её точное описание — `pyproject.toml` (зависимости и группы), `poetry.lock`
 (точные версии и хеши всех пакетов), `poetry.toml` (окружение создаётся в
 `.venv/` внутри проекта) и `.python-version`. Команда `poetry install`
-воссоздаёт идентичное окружение на любой машине.
+воссоздаёт идентичное окружение на любой машине и устанавливает сам пакет
+`knowledge_tracing` с командой `kt`.
 
 ```bash
-# 1. Создать .venv/ в корне проекта, установить зависимости строго по poetry.lock
-#    (runtime + группа dev: pytest, ruff, mypy, pre-commit) и git-хуки pre-commit
-make install
-# или вручную: poetry install && poetry run pre-commit install
+# 1. Окружение .venv/ строго по poetry.lock (runtime + dev) и git-хуки
+make install            # = poetry install && poetry run pre-commit install
 
-# 2. Быстрая проверка установки
-poetry run pytest -m "not slow" -q
+# 2. Проверки: статический анализ и тесты с покрытием
+make lint
+make test
 
-# 3. Прогон пайплайна на sample (быстро, офлайн)
-bash scripts/run_pipeline.sh
-# или эквивалентно: make all
+# 3. Прогон пайплайна на sample: быстрый (~1 минута) или с полными бюджетами
+make train-quick        # = poetry run kt train --data-source sample --quick
+make train              # = poetry run kt train --data-source sample
 
 # 4. Прогон на полном датасете (~20–45 минут на CPU)
-bash scripts/run_pipeline_full.sh
-# или эквивалентно: make all-full
+make train-full         # = poetry run kt train --data-source full
 
-# 5. Просмотр результатов в MLflow UI
-make mlflow
-# открыть http://localhost:5000
+# 5. Предсказания упакованной модели для примеров из examples/history.csv
+make predict            # = poetry run kt predict --input examples/history.csv
+
+# 6. После согласования: зарегистрированный challenger становится champion
+make promote            # = poetry run kt promote
+
+# 7. Опубликовать результаты последнего прогона в reports/ (README, презентация)
+make publish-report
+
+# 8. MLflow UI: запуски и Model Registry
+make mlflow             # открыть http://localhost:5000
 ```
 
 Команды можно запускать и без префикса `poetry run`, если активировать
 окружение: `source .venv/bin/activate`. VS Code подхватывает интерпретатор
 `.venv/bin/python` автоматически (настройка в `.vscode/settings.json`).
+Справка по командам: `kt --help`, `kt train --help` и т. д.
+
+Регрессионная проверка после изменений кода — быстрый прогон на sample
+и сравнение с эталоном:
+
+```bash
+make train-quick
+poetry run python scripts/compare_metrics.py docs/baseline/metrics_sample_quick.json artifacts/metrics.json
+```
 
 ### Б.3 Запуск в Docker
 
@@ -1078,14 +1147,14 @@ make mlflow
 # Сборка образа
 docker build -t kt-pipeline:latest .
 
-# Прогон на sample (вывод в stdout)
-docker run --rm kt-pipeline:latest --data-source sample --quick
+# Прогон на sample с минимальными бюджетами (вывод в stdout)
+docker run --rm kt-pipeline:latest train --data-source sample --quick
 
 # Прогон с сохранением результатов на хост-машину
 docker run --rm \
-    -v $(pwd)/reports:/app/reports \
+    -v $(pwd)/artifacts:/app/artifacts \
     -v $(pwd)/mlruns:/app/mlruns \
-    kt-pipeline:latest --data-source sample
+    kt-pipeline:latest train --data-source sample
 
 # Запуск MLflow UI поверх результатов
 docker compose up mlflow
@@ -1095,8 +1164,9 @@ docker compose up mlflow
 ### Б.4 Прогон через ноутбук
 
 Файл `notebooks/train.ipynb` содержит тот же пайплайн, разбитый по ячейкам с
-пояснениями. Для запуска нужен `ipykernel` из необязательной группы
-`notebook`; после установки в VS Code достаточно выбрать kernel `.venv`:
+пояснениями, и использует API пакета (`load_config`, классы моделей). Для
+запуска нужен `ipykernel` из необязательной группы `notebook`; после
+установки в VS Code достаточно выбрать kernel `.venv`:
 
 ```bash
 poetry install --with notebook
@@ -1119,8 +1189,11 @@ poetry run python -m ipykernel install --user --name kt-venv \
 | `models.dkt_optuna.epochs_per_trial` | 8 |
 | `models.automl_flaml.time_budget_s` | 600 |
 
-Для CI / smoke-проверки используется флаг `--quick`, который накладывает
-сокращённые бюджеты прямо в коде пайплайна (5 эпох DKT, 4 trials Optuna,
-15 секунд FLAML).
+Для CI / smoke-проверки используется флаг `--quick`: поверх
+`config/config.yaml` накладывается оверлей `config/quick.yaml` с сокращёнными
+бюджетами (5 эпох DKT, 4 trials Optuna, 15 секунд FLAML). Свои оверлеи
+передаются через `--override файл.yaml`. Конфигурация проверяется при
+загрузке: опечатка в ключе или недопустимое значение останавливают запуск с
+понятным сообщением (код выхода 2).
 
 ---

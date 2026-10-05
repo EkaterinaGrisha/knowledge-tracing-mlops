@@ -1,6 +1,6 @@
 [project]
-name = "ml-pipeline-knowledge-tracing"
-version = "1.0.0"
+name = "knowledge-tracing"
+version = "2.0.0"
 description = "Automated ML pipeline for Knowledge Tracing on the ASSISTments 2009 dataset (BKT, DKT+Optuna, FLAML AutoML)."
 authors = [{ name = "Ekaterina Grigoreva" }]
 readme = "README.md"
@@ -25,11 +25,20 @@ dependencies = [
     # (duplicate libomp), so the 2.6 line is kept.
     "torch (>=2.6,<2.7)",
     "requests (>=2.31,<3.0)",
+    "pydantic (>=2.5,<3.0)",
+    # typing.override arrives in Python 3.12
+    "typing-extensions (>=4.6,<5.0)",
 ]
 
+[project.scripts]
+kt = "knowledge_tracing.cli:main"
+
+[build-system]
+requires = ["poetry-core>=2.0,<3.0"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
-# Dependencies only for now: the code is still imported as the `src` namespace.
-package-mode = false
+packages = [{ include = "knowledge_tracing", from = "src" }]
 
 [tool.poetry.dependencies]
 # Linux (Docker image, CI) gets CPU-only wheels without the ~1 GB CUDA payload;
@@ -68,12 +77,21 @@ optional = true
 python-pptx = ">=0.6.21,<2.0"
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
 testpaths = ["tests"]
 addopts = "-q"
 markers = [
   "slow: marks tests that train models (deselect with '-m \"not slow\"')",
 ]
+
+[tool.coverage.run]
+source = ["knowledge_tracing"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+# CI fails if the test suite covers less of the package than this
+fail_under = 90
 
 [tool.ruff]
 line-length = 100
@@ -93,17 +111,32 @@ select = [
     "S",       # flake8-bandit (security)
     "T20",     # flake8-print
     "NPY",     # NumPy-specific rules
+    "D",       # pydocstyle (Google convention)
+    "PL",      # pylint
     "RUF",     # Ruff-specific rules
 ]
 ignore = [
     "E501",                        # line length is handled by the formatter
     "RUF001", "RUF002", "RUF003",  # Cyrillic and typographic characters are intentional
+    "D105",                        # magic methods (__len__, __enter__, ...) need no docstring
+    "D107",                        # constructor arguments are documented on the class
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101"]           # pytest relies on plain asserts
+# pytest relies on plain asserts and literal expected values; test names document intent
+"tests/**" = ["S101", "D", "PLR2004", "PLC0415"]
 "scripts/**" = ["T20"]          # command-line scripts report via print
-"notebooks/**" = ["T20", "E402"]  # notebooks report via print; imports follow the setup cell
+"notebooks/**" = ["T20", "E402", "D"]  # notebooks report via print; imports follow the setup cell
+# heavy libraries are imported when a command runs, after the runtime settings
+"src/knowledge_tracing/cli.py" = ["PLC0415"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+# Training and layout functions take their settings as explicit arguments.
+max-args = 8
+max-positional-args = 8
 
 [tool.ruff.lint.pep8-naming]
 # Conventional ML names: feature matrices (X_train, Xtr) and sequence/batch sizes (T, B, L).
@@ -115,12 +148,20 @@ docstring-code-format = true
 [tool.mypy]
 python_version = "3.11"
 files = ["src", "tests"]
+mypy_path = "src"
 check_untyped_defs = true
 no_implicit_optional = true
 strict_equality = true
 warn_redundant_casts = true
 warn_unused_ignores = true
 pretty = true
+
+[[tool.mypy.overrides]]
+# Every function of the package must be annotated (tests are exempt:
+# pytest injects fixtures by name).
+module = ["knowledge_tracing.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
 
 [[tool.mypy.overrides]]
 # Third-party libraries without type information.

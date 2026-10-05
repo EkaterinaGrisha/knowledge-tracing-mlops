@@ -27,9 +27,10 @@ coverage.xml
 data/raw/
 data/processed/
 
-# ML experiment tracking
+# ML experiment tracking (MLflow SQLite store + artifacts) and the packaged model
 mlruns/
 mlartifacts/
+artifacts/
 
 # Reports kept under version control: figures, screenshots, metrics.json
 # (referenced from README.md as proof of results)

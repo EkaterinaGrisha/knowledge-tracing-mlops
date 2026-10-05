@@ -1,10 +1,11 @@
 import numpy as np
 
-from src.models.bkt import (
+from knowledge_tracing.etl.datasets import StudentSequence
+from knowledge_tracing.models.bkt import (
     DEFAULT_PARAMS,
-    evaluate_bkt,
     fit_bkt_per_skill,
     fit_em,
+    predict_bkt,
     predict_next_correct,
 )
 
@@ -24,15 +25,18 @@ def test_em_learns_from_improving_sequences():
     assert 0.0 < p.p_learn <= 0.5
 
 
-def test_per_skill_fit_and_eval():
+def test_per_skill_fit_and_predict():
     rng = np.random.default_rng(0)
-    seqs = []
-    for _ in range(30):
-        skills = rng.integers(0, 3, size=12)
-        correct = rng.integers(0, 2, size=12)
-        seqs.append({"skills": skills, "correct": correct})
+    seqs = [
+        StudentSequence(
+            user_id=uid,
+            skills=rng.integers(0, 3, size=12),
+            correct=rng.integers(0, 2, size=12),
+        )
+        for uid in range(30)
+    ]
     params = fit_bkt_per_skill(seqs, n_skills=3, em_iters=10)
     assert set(params.keys()) == {0, 1, 2}
-    _auc, acc, _rmse, yt, yp = evaluate_bkt(params, seqs, n_skills=3)
-    assert 0.0 <= acc <= 1.0
-    assert len(yt) == len(yp)
+    y_true, y_pred = predict_bkt(params, seqs, n_skills=3)
+    assert len(y_true) == len(y_pred) == 30 * 12
+    assert ((y_pred >= 0.0) & (y_pred <= 1.0)).all()

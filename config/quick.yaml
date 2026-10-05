@@ -1,0 +1,11 @@
+# Minimal training budgets for smoke runs (CI, `--quick`).
+# Deep-merged on top of config.yaml: everything not listed here keeps its value.
+
+models:
+  dkt:
+    epochs: 5
+  dkt_optuna:
+    n_trials: 4
+    epochs_per_trial: 3
+  automl_flaml:
+    time_budget_s: 15

@@ -38,14 +38,29 @@ models:
     estimator_list: ["lgbm", "xgboost", "rf", "extra_tree"]
 
 monitoring:
+  # Stop the run when a data-quality check fails (false: log a warning and continue).
+  fail_on_data_quality: true
   # PSI thresholds: <0.1 stable, 0.1-0.25 moderate drift, >0.25 significant drift.
   psi_warn: 0.10
   psi_alert: 0.25
 
 mlflow:
   experiment_name: "knowledge-tracing-automl"
-  tracking_uri: "file:./mlruns"
+  # SQLite store for runs and the Model Registry: MLflow 3 has put the plain
+  # ./mlruns file store into maintenance mode. MLFLOW_TRACKING_URI overrides it.
+  tracking_uri: "sqlite:///mlruns/mlflow.db"
+  artifact_location: "mlruns/artifacts"
+
+serving:
+  # Model packaged for inference (kt predict) and registered in the MLflow registry.
+  model: "DKT+Optuna"
+  registered_model_name: "kt-dkt"
+  # Quality gate: a new version is registered (alias "challenger") only above this test AUC.
+  min_test_auc: 0.75
 
 output:
-  figures_dir: "reports/figures"
-  metrics_path: "reports/metrics.json"
+  # Every run writes here (git-ignored). The results published in the README
+  # live in reports/ and are refreshed deliberately: make publish-report.
+  figures_dir: "artifacts/figures"
+  metrics_path: "artifacts/metrics.json"
+  model_dir: "artifacts/model"
