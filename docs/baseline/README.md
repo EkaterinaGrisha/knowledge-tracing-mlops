@@ -1,10 +1,13 @@
 # Baseline-метрики
 
-`metrics_sample_quick.json` — метрики **исходного кода** (тег `v1.0.0-baseline`),
-полученные в окружении, зафиксированном в `poetry.lock`:
+`metrics_sample_quick.json` — метрики **исходного кода** (тег `v1.0.0-baseline`)
+на закоммиченной выборке с сокращёнными бюджетами (`--quick`, seed 42),
+полученные в окружении, зафиксированном в `poetry.lock`. В исходной версии
+такой прогон запускался скриптом `scripts/run_pipeline.sh`; в версии 2.0.0
+скрипт удалён, и тот же прогон текущего кода выполняется командой:
 
 ```bash
-bash scripts/run_pipeline.sh   # sample, --quick, seed = 42
+make train-quick   # = poetry run kt train --data-source sample --quick
 ```
 
 Файл служит эталоном для регрессионной проверки рефакторинга:
