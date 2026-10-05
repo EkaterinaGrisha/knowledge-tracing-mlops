@@ -12,9 +12,13 @@
 > Исходный репозиторий не изменяется; история коммитов перенесена полностью,
 > исходное состояние отмечено тегом `v1.0.0-baseline`.
 
-**Документация модели:** [Model Card](MODEL_CARD.md) — назначение,
-данные, качество (в том числе по подгруппам), ограничения и риски модели
-`kt-dkt`.
+**Документация модели:**
+
+- [Model Card](MODEL_CARD.md) — назначение, данные, качество (в том числе
+  по подгруппам), ограничения и риски модели `kt-dkt`;
+- [Жизненный цикл модели и workflow согласования](docs/model_lifecycle.md) —
+  BPMN-процесс: от задачи через обучение, проверки, ревью и согласование до
+  продвижения в рабочую версию и мониторинга.
 
 ---
 
@@ -1047,7 +1051,10 @@ knowledge-tracing-mlops/
 ├── docker-compose.yml              # два сервиса: pipeline + MLflow UI
 ├── .dockerignore / .gitignore
 ├── .vscode/                        # интерпретатор из .venv, pytest, ruff и mypy в VS Code
-├── .github/workflows/ci.yml        # GitHub Actions: pre-commit, pytest + coverage, docker build + smoke
+├── .github/
+│   ├── workflows/ci.yml            # GitHub Actions: pre-commit, pytest + coverage, docker build + smoke
+│   ├── pull_request_template.md    # чек-лист согласования изменений
+│   └── CODEOWNERS                  # обязательные ревьюеры
 ├── config/
 │   ├── config.yaml                 # гиперпараметры, пути, MLflow, порог регистрации модели
 │   └── quick.yaml                  # оверлей с минимальными бюджетами (kt train --quick)
@@ -1057,7 +1064,10 @@ knowledge-tracing-mlops/
 │   └── processed/                  # выход стадии Load (не в репозитории)
 ├── examples/history.csv            # пример истории студентов для kt predict
 ├── notebooks/train.ipynb           # пошаговый прогон пайплайна (без выводов ячеек)
-├── docs/baseline/                  # эталонные метрики для регрессионной проверки
+├── docs/
+│   ├── model_lifecycle.md          # BPMN-процесс жизненного цикла и согласования
+│   ├── bpmn/                       # model_lifecycle.bpmn (BPMN 2.0) + экспорт SVG/PNG
+│   └── baseline/                   # эталонные метрики для регрессионной проверки
 ├── reports/                        # опубликованные результаты (make publish-report)
 │   ├── metrics.json
 │   ├── sliced_metrics.json         # качество модели по подгруппам (Model Card)
