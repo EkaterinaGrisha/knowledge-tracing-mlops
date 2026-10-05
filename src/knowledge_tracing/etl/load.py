@@ -18,6 +18,11 @@ LOG = logging.getLogger(__name__)
 
 
 def load(processed: ProcessedData, processed_dir: Path) -> dict[str, Path]:
+    """Write the feature frame, the cleaned interactions and dataset statistics.
+
+    Returns:
+        Paths of the written files keyed by ``features``, ``long`` and ``stats``.
+    """
     out_dir = resolve_path(processed_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 

@@ -19,12 +19,16 @@ DECISION_THRESHOLD = 0.5
 PROBA_EPS = 1e-7
 
 
+def has_both_classes(y_true: np.ndarray) -> bool:
+    """True when the labels contain both outcomes, so AUC and log-loss are defined."""
+    return np.unique(np.asarray(y_true).astype(int)).size > 1
+
+
 def roc_auc(y_true: np.ndarray, y_score: np.ndarray) -> float:
     """ROC-AUC of raw scores; NaN when only one class is present."""
-    labels = np.asarray(y_true).astype(int)
-    if len(np.unique(labels)) < 2:
+    if not has_both_classes(y_true):
         return float("nan")
-    return float(roc_auc_score(labels, y_score))
+    return float(roc_auc_score(np.asarray(y_true).astype(int), y_score))
 
 
 def compute_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict[str, float]:
@@ -36,7 +40,7 @@ def compute_metrics(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict[str, f
     yt = np.asarray(y_true).astype(int)
     yp = np.clip(np.asarray(y_pred_proba, dtype=float), PROBA_EPS, 1 - PROBA_EPS)
     yhat = (yp > DECISION_THRESHOLD).astype(int)
-    has_both = len(set(yt.tolist())) > 1
+    has_both = has_both_classes(yt)
     return {
         "auc": float(roc_auc_score(yt, yp)) if has_both else float("nan"),
         "accuracy": float(accuracy_score(yt, yhat)),

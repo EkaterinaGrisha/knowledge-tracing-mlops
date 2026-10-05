@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+from typing_extensions import override
 
 from ..config import BKTConfig
 from ..etl.datasets import SplitData, StudentSequence, TrainingData
@@ -19,16 +20,37 @@ from .base import KnowledgeTracingModel, NotFittedError, Predictions
 
 @dataclass
 class BktParams:
+    """BKT parameters of one skill.
+
+    Attributes:
+        p_init: Probability the skill is known before the first attempt.
+        p_learn: Probability of learning the skill after an attempt.
+        p_slip: Probability of a wrong answer although the skill is known.
+        p_guess: Probability of a right answer although the skill is unknown.
+    """
+
     p_init: float
     p_learn: float
     p_slip: float
     p_guess: float
 
     def as_tuple(self) -> tuple[float, float, float, float]:
+        """Parameters in the order (p_init, p_learn, p_slip, p_guess)."""
         return (self.p_init, self.p_learn, self.p_slip, self.p_guess)
 
 
 DEFAULT_PARAMS = BktParams(0.25, 0.15, 0.10, 0.20)
+
+# EM keeps every parameter inside a plausible range (no degenerate solutions
+# such as "always guessing" or "never learning").
+P_INIT_BOUNDS = (0.01, 0.99)
+P_LEARN_BOUNDS = (0.01, 0.50)
+P_SLIP_BOUNDS = (0.01, 0.30)
+P_GUESS_BOUNDS = (0.01, 0.40)
+# EM stops once the log-likelihood improves by less than this.
+EM_TOLERANCE = 1e-4
+# Keeps normalisations away from division by zero.
+_EPS = 1e-12
 
 
 def _emission(y: int, p: BktParams) -> tuple[float, float]:
@@ -38,6 +60,16 @@ def _emission(y: int, p: BktParams) -> tuple[float, float]:
 
 
 def forward_alpha(seq: list[int], p: BktParams) -> tuple[np.ndarray, float]:
+    """Scaled forward pass of the BKT hidden Markov model.
+
+    Args:
+        seq: Correctness (0/1) of consecutive attempts at one skill.
+        p: Parameters of the skill.
+
+    Returns:
+        Normalised forward probabilities of shape (len(seq), 2) — columns are
+        "unknown" and "known" — and the log-likelihood of the sequence.
+    """
     T = len(seq)
     alpha = np.zeros((T, 2))
     log_lik = 0.0
@@ -75,6 +107,16 @@ def _backward_beta(seq: list[int], p: BktParams) -> np.ndarray:
 
 
 def fit_em(seqs: list[list[int]], n_iter: int = 30, init: BktParams = DEFAULT_PARAMS) -> BktParams:
+    """Fit the parameters of one skill with Expectation-Maximisation.
+
+    Args:
+        seqs: Correctness sequences of all students for this skill.
+        n_iter: Maximum number of EM iterations.
+        init: Starting parameters.
+
+    Returns:
+        Parameters clipped to the plausible ranges defined in this module.
+    """
     p = BktParams(*init.as_tuple())
     last_ll = -np.inf
     for _ in range(n_iter):
@@ -91,7 +133,7 @@ def fit_em(seqs: list[list[int]], n_iter: int = 30, init: BktParams = DEFAULT_PA
             beta = _backward_beta(seq, p)
             total_ll += ll
             gamma = alpha * beta
-            gamma /= gamma.sum(axis=1, keepdims=True) + 1e-12
+            gamma /= gamma.sum(axis=1, keepdims=True) + _EPS
             num_init += gamma[0, 1]
             den_init += 1.0
             for t in range(T - 1):
@@ -99,7 +141,7 @@ def fit_em(seqs: list[list[int]], n_iter: int = 30, init: BktParams = DEFAULT_PA
                 xi_00 = alpha[t, 0] * (1.0 - p.p_learn) * e0n * beta[t + 1, 0]
                 xi_01 = alpha[t, 0] * p.p_learn * e1n * beta[t + 1, 1]
                 xi_11 = alpha[t, 1] * 1.0 * e1n * beta[t + 1, 1]
-                norm = xi_00 + xi_01 + xi_11 + 1e-12
+                norm = xi_00 + xi_01 + xi_11 + _EPS
                 xi_00 /= norm
                 xi_01 /= norm
                 num_learn += xi_01
@@ -112,20 +154,29 @@ def fit_em(seqs: list[list[int]], n_iter: int = 30, init: BktParams = DEFAULT_PA
                 if seq[t] == 1:
                     num_guess += gamma[t, 0]
         if den_init > 0:
-            p.p_init = float(np.clip(num_init / den_init, 0.01, 0.99))
+            p.p_init = float(np.clip(num_init / den_init, *P_INIT_BOUNDS))
         if den_learn > 0:
-            p.p_learn = float(np.clip(num_learn / den_learn, 0.01, 0.50))
+            p.p_learn = float(np.clip(num_learn / den_learn, *P_LEARN_BOUNDS))
         if den_slip > 0:
-            p.p_slip = float(np.clip(num_slip / den_slip, 0.01, 0.30))
+            p.p_slip = float(np.clip(num_slip / den_slip, *P_SLIP_BOUNDS))
         if den_guess > 0:
-            p.p_guess = float(np.clip(num_guess / den_guess, 0.01, 0.40))
-        if abs(total_ll - last_ll) < 1e-4:
+            p.p_guess = float(np.clip(num_guess / den_guess, *P_GUESS_BOUNDS))
+        if abs(total_ll - last_ll) < EM_TOLERANCE:
             break
         last_ll = total_ll
     return p
 
 
 def predict_next_correct(seq: list[int], p: BktParams) -> list[float]:
+    """P(correct) of every attempt given only the attempts before it.
+
+    Args:
+        seq: Correctness (0/1) of consecutive attempts at one skill.
+        p: Parameters of the skill.
+
+    Returns:
+        One prediction per attempt; the first one uses ``p_init`` only.
+    """
     T = len(seq)
     if T == 0:
         return []
@@ -138,7 +189,7 @@ def predict_next_correct(seq: list[int], p: BktParams) -> list[float]:
         e0, e1 = _emission(seq[t], p)
         post0 = p_unknown * e0
         post1 = p_known * e1
-        s = post0 + post1 + 1e-12
+        s = post0 + post1 + _EPS
         post0 /= s
         post1 /= s
         p_unknown = post0 * (1.0 - p.p_learn)
@@ -167,6 +218,7 @@ def _per_skill_subsequences(
 def fit_bkt_per_skill(
     train_sequences: list[StudentSequence], n_skills: int, em_iters: int
 ) -> dict[int, BktParams]:
+    """Fit one parameter set per skill; skills without data keep the defaults."""
     by_skill = _per_skill_subsequences(train_sequences, n_skills)
     params: dict[int, BktParams] = {}
     for k in range(n_skills):
@@ -201,10 +253,12 @@ class BKTModel(KnowledgeTracingModel):
         self.params_: dict[int, BktParams] | None = None
         self.n_skills_ = 0
 
+    @override
     def fit(self, data: TrainingData) -> None:
         self.n_skills_ = data.n_skills
         self.params_ = fit_bkt_per_skill(data.train.sequences, data.n_skills, self.cfg.em_iters)
 
+    @override
     def predict(self, split: SplitData) -> Predictions:
         if self.params_ is None:
             raise NotFittedError(f"{self.name} is not fitted")

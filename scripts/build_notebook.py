@@ -17,10 +17,12 @@ CELLS: list[tuple[str, str]] = []
 
 
 def md(text: str) -> None:
+    """Append a markdown cell."""
     CELLS.append(("markdown", text))
 
 
 def code(text: str) -> None:
+    """Append a code cell."""
     CELLS.append(("code", text))
 
 
@@ -572,6 +574,7 @@ def _to_source(text: str) -> list[str]:
 
 
 def build_notebook() -> dict:
+    """Notebook JSON (nbformat 4.5) from the collected cells."""
     nb_cells = []
     for cell_type, text in CELLS:
         cell = {
@@ -602,6 +605,7 @@ def build_notebook() -> dict:
 
 
 def main() -> None:
+    """Write notebooks/train.ipynb."""
     out = Path(__file__).resolve().parents[1] / "notebooks" / "train.ipynb"
     out.parent.mkdir(parents=True, exist_ok=True)
     nb = build_notebook()

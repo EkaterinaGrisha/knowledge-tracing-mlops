@@ -54,7 +54,7 @@ def _add_textbox(
     height: float,
     paragraphs: list[tuple[str, int, bool, RGBColor]],
 ) -> None:
-    """paragraphs is a list of (text, font_size_pt, bold, color)."""
+    """Add a text box; ``paragraphs`` holds (text, font size in pt, bold, colour)."""
     box = slide.shapes.add_textbox(Inches(left), Inches(top), Inches(width), Inches(height))
     tf = box.text_frame
     tf.word_wrap = True
@@ -553,6 +553,7 @@ def _conclusions_slide(prs: Presentation, metrics: dict) -> None:
 
 
 def build(output: str = "presentation/presentation.pptx") -> str:
+    """Build the deck from reports/metrics.json and figures; returns the file path."""
     metrics = _load_metrics()
 
     prs = Presentation()

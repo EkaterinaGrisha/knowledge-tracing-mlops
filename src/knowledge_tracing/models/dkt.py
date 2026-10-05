@@ -16,6 +16,7 @@ import numpy as np
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from typing_extensions import override
 
 from ..config import DKTConfig
 from ..etl.datasets import SplitData, StudentSequence, TrainingData
@@ -24,6 +25,22 @@ from .base import KnowledgeTracingModel, NotFittedError, Predictions
 LOG = logging.getLogger(__name__)
 
 Batch = tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+
+# A sequence needs at least one transition (two attempts) to be supervised.
+MIN_SUPERVISED_LENGTH = 2
+# Gradients are clipped to this global norm to keep LSTM training stable.
+GRAD_CLIP_NORM = 5.0
+
+
+@dataclass(frozen=True)
+class DKTHyperparameters:
+    """Architecture and optimiser settings of one DKT network."""
+
+    embed_dim: int
+    hidden_dim: int
+    dropout: float
+    lr: float
+    batch_size: int
 
 
 class DKTNetwork(nn.Module):
@@ -37,7 +54,9 @@ class DKTNetwork(nn.Module):
         self.drop = nn.Dropout(dropout)
         self.head = nn.Linear(hidden_dim, n_concepts)
 
+    @override
     def forward(self, x_idx: torch.Tensor, lengths: torch.Tensor) -> torch.Tensor:
+        """Per-skill logits after every step of the padded input sequences."""
         emb = self.embed(x_idx)
         packed = pack_padded_sequence(emb, lengths.cpu(), batch_first=True, enforce_sorted=False)
         out_packed, _ = self.lstm(packed)
@@ -46,8 +65,8 @@ class DKTNetwork(nn.Module):
 
 
 def _supervised(sequences: list[StudentSequence]) -> list[StudentSequence]:
-    """Sequences with at least one transition to supervise (length >= 2)."""
-    return [s for s in sequences if len(s) >= 2]
+    """Sequences with at least one transition to supervise."""
+    return [s for s in sequences if len(s) >= MIN_SUPERVISED_LENGTH]
 
 
 def _input_indices(seq: StudentSequence) -> np.ndarray:
@@ -84,23 +103,33 @@ def _supervision_mask(lengths: torch.Tensor, max_t: int) -> torch.Tensor:
 def train_dkt(
     sequences: list[StudentSequence],
     n_concepts: int,
+    hp: DKTHyperparameters,
     *,
-    device: torch.device,
-    embed_dim: int,
-    hidden_dim: int,
-    dropout: float,
     epochs: int,
-    batch_size: int,
-    lr: float,
+    device: torch.device,
     seed: int,
     verbose: bool = False,
 ) -> tuple[DKTNetwork, list[float]]:
+    """Train a DKT network with masked one-step-ahead binary cross-entropy.
+
+    Args:
+        sequences: Training sequences; those without a transition are skipped.
+        n_concepts: Number of skills (size of the output layer).
+        hp: Architecture and optimiser settings.
+        epochs: Number of passes over the training sequences.
+        device: Torch device to train on.
+        seed: Seed for weight initialisation, dropout and batch order.
+        verbose: Log the mean loss every five epochs.
+
+    Returns:
+        The trained network and the mean training loss of every epoch.
+    """
     train = _supervised(sequences)
     torch.manual_seed(seed)
     # Also seed NumPy's global RNG for third-party code that relies on it.
     np.random.seed(seed)  # noqa: NPY002
-    model = DKTNetwork(n_concepts, embed_dim, hidden_dim, dropout).to(device)
-    optim = torch.optim.Adam(model.parameters(), lr=lr)
+    model = DKTNetwork(n_concepts, hp.embed_dim, hp.hidden_dim, hp.dropout).to(device)
+    optim = torch.optim.Adam(model.parameters(), lr=hp.lr)
     loss_fn = nn.BCEWithLogitsLoss(reduction="none")
     rng = np.random.default_rng(seed)
     losses: list[float] = []
@@ -109,8 +138,8 @@ def train_dkt(
         order = rng.permutation(len(train))
         epoch_loss = 0.0
         n_batches = 0
-        for i in range(0, len(order), batch_size):
-            batch = [train[j] for j in order[i : i + batch_size]]
+        for i in range(0, len(order), hp.batch_size):
+            batch = [train[j] for j in order[i : i + hp.batch_size]]
             x, lengths, next_skill, next_correct = _collate(batch, device)
             logits = model(x, lengths)
             logit_at_target = logits.gather(2, next_skill.unsqueeze(-1)).squeeze(-1)
@@ -119,7 +148,7 @@ def train_dkt(
             loss = (raw * mask).sum() / mask.sum().clamp_min(1.0)
             optim.zero_grad()
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP_NORM)
             optim.step()
             epoch_loss += float(loss.item())
             n_batches += 1
@@ -154,20 +183,10 @@ def predict_dkt(
 
 
 def pick_device() -> torch.device:
+    """CUDA when available, otherwise CPU."""
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
-
-
-@dataclass(frozen=True)
-class DKTHyperparameters:
-    """Architecture and optimiser settings of one DKT network."""
-
-    embed_dim: int
-    hidden_dim: int
-    dropout: float
-    lr: float
-    batch_size: int
 
 
 class DKTModel(KnowledgeTracingModel):
@@ -184,6 +203,7 @@ class DKTModel(KnowledgeTracingModel):
         self.losses_: list[float] = []
         self.n_skills_ = 0
 
+    @override
     def fit(self, data: TrainingData) -> None:
         cfg = self.cfg
         self._fit_with(
@@ -197,20 +217,18 @@ class DKTModel(KnowledgeTracingModel):
         self.network_, self.losses_ = train_dkt(
             data.train.sequences,
             data.n_skills,
-            device=self.device,
-            embed_dim=hp.embed_dim,
-            hidden_dim=hp.hidden_dim,
-            dropout=hp.dropout,
+            hp,
             epochs=self.cfg.epochs,
-            batch_size=hp.batch_size,
-            lr=hp.lr,
+            device=self.device,
             seed=self.seed,
         )
 
+    @override
     def predict(self, split: SplitData) -> Predictions:
         if self.network_ is None:
             raise NotFittedError(f"{self.name} is not fitted")
         return predict_dkt(self.network_, split.sequences, self.device)
 
+    @override
     def training_curve(self) -> list[float]:
         return list(self.losses_)

@@ -33,10 +33,14 @@ FEATURE_COLS = [
     "skill_difficulty",
 ]
 TARGET = "correct"
+# recent3_correct_rate: share of correct answers among the last attempts
+RECENT_WINDOW = 3
 
 
 @dataclass
 class ProcessedData:
+    """Output of the Transform step, shared by all downstream stages."""
+
     features: pd.DataFrame  # feature frame + correct + split + user_id
     long: pd.DataFrame  # cleaned long frame (user_id, order_idx, skill_idx, correct, split)
     feature_cols: list[str]
@@ -45,6 +49,7 @@ class ProcessedData:
     stats: dict = field(default_factory=dict)
 
     def split_xy(self, split: str) -> tuple[pd.DataFrame, pd.Series]:
+        """Feature matrix and target of one split (``train``, ``val`` or ``test``)."""
         sub = self.features[self.features["split"] == split]
         return sub[self.feature_cols].copy(), sub[TARGET].copy()
 
@@ -69,6 +74,16 @@ def _assign_splits(
 
 
 def transform(df_raw: pd.DataFrame, data_cfg: DataConfig, seed: int) -> ProcessedData:
+    """Clean the interactions, split students and engineer causal features.
+
+    Args:
+        df_raw: Long frame with columns user_id, order_idx, skill_id, correct.
+        data_cfg: Sequence-length limits and split fractions.
+        seed: Seed of the student split.
+
+    Returns:
+        Features, cleaned interactions, the skill index mapping and statistics.
+    """
     min_len = data_cfg.min_seq_len
     max_len = data_cfg.max_seq_len
 
@@ -123,7 +138,7 @@ def transform(df_raw: pd.DataFrame, data_cfg: DataConfig, seed: int) -> Processe
 
     df["recent3_correct_rate"] = (
         g_user["correct"]
-        .transform(lambda s: s.shift(1).rolling(3, min_periods=1).mean())
+        .transform(lambda s: s.shift(1).rolling(RECENT_WINDOW, min_periods=1).mean())
         .fillna(global_mean)
     )
 

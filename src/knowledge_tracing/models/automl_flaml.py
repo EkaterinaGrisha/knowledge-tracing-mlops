@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from flaml import AutoML
+from typing_extensions import override
 
 from ..config import AutoMLConfig
 from ..etl.datasets import SplitData, TrainingData
@@ -33,6 +34,22 @@ def train_automl(
     estimator_list: list[str],
     seed: int,
 ) -> AutoML:
+    """Let FLAML choose and tune an estimator under a wall-clock budget.
+
+    Args:
+        X_train: Training features.
+        y_train: Training labels.
+        X_val: Validation features used for model selection and early stopping.
+        y_val: Validation labels.
+        time_budget_s: Search budget in seconds; FLAML spends all of it, so the
+            number of trials depends on machine speed.
+        metric: Metric FLAML optimises (e.g. ``"roc_auc"``).
+        estimator_list: Candidate estimators (e.g. ``["lgbm", "xgboost"]``).
+        seed: Seed of the search.
+
+    Returns:
+        The fitted FLAML ``AutoML`` object.
+    """
     automl = AutoML()
     automl.fit(
         X_train=X_train,
@@ -68,6 +85,7 @@ class AutoMLModel(KnowledgeTracingModel):
         self.automl_: AutoML | None = None
         self.feature_names_: list[str] = []
 
+    @override
     def fit(self, data: TrainingData) -> None:
         self.feature_names_ = list(data.train.features.columns)
         self.automl_ = train_automl(
@@ -86,15 +104,19 @@ class AutoMLModel(KnowledgeTracingModel):
             raise NotFittedError(f"{self.name} is not fitted")
         return self.automl_
 
+    @override
     def predict(self, split: SplitData) -> Predictions:
         return predict_automl(self._automl(), split.features, split.target)
 
+    @override
     def mlflow_params(self) -> dict[str, Any]:
         return {"automl_best_estimator": self._automl().best_estimator}
 
+    @override
     def report(self) -> dict[str, Any]:
         return {"automl_best_estimator": self._automl().best_estimator}
 
+    @override
     def feature_importance(self) -> pd.Series | None:
         estimator = getattr(getattr(self.automl_, "model", None), "estimator", None)
         importances = getattr(estimator, "feature_importances_", None)

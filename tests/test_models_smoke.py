@@ -7,6 +7,7 @@ import pytest
 from knowledge_tracing.etl.datasets import StudentSequence
 from knowledge_tracing.evaluation.metrics import roc_auc
 from knowledge_tracing.models import dkt as dkt_mod
+from knowledge_tracing.models.dkt import DKTHyperparameters
 
 
 @pytest.fixture
@@ -26,18 +27,8 @@ def tiny_sequences() -> list[StudentSequence]:
 @pytest.mark.slow
 def test_dkt_trains_and_predicts(tiny_sequences):
     device = dkt_mod.pick_device()
-    model, losses = dkt_mod.train_dkt(
-        tiny_sequences,
-        n_concepts=4,
-        device=device,
-        embed_dim=16,
-        hidden_dim=16,
-        dropout=0.2,
-        epochs=2,
-        batch_size=32,
-        lr=5e-3,
-        seed=0,
-    )
+    hp = DKTHyperparameters(embed_dim=16, hidden_dim=16, dropout=0.2, lr=5e-3, batch_size=32)
+    model, losses = dkt_mod.train_dkt(tiny_sequences, 4, hp, epochs=2, device=device, seed=0)
     assert len(losses) == 2
     y_true, y_pred = dkt_mod.predict_dkt(model, tiny_sequences, device)
     # one prediction per transition (every interaction except the first of each student)

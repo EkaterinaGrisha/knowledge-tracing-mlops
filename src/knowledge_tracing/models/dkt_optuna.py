@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import optuna
+from typing_extensions import override
 
 from ..config import DKTConfig, DKTOptunaConfig
 from ..etl.datasets import StudentSequence, TrainingData
@@ -41,6 +42,22 @@ def search_dkt(
     epochs_per_trial: int,
     seed: int,
 ) -> SearchResult:
+    """Search the DKT architecture with Optuna's TPE sampler.
+
+    Every trial trains a short DKT run on the training sequences and is scored
+    by ROC-AUC on the validation sequences.
+
+    Args:
+        train_sequences: Sequences to train trial networks on.
+        val_sequences: Sequences that score the trials.
+        n_concepts: Number of skills.
+        n_trials: Number of configurations to try.
+        epochs_per_trial: Training epochs of every trial.
+        seed: Seed of the sampler and of every trial's training.
+
+    Returns:
+        Best hyperparameters, their validation AUC and the Optuna study.
+    """
     optuna.logging.set_verbosity(optuna.logging.WARNING)
     device = pick_device()
 
@@ -50,17 +67,9 @@ def search_dkt(
         dropout = trial.suggest_float("dropout", 0.0, 0.5)
         lr = trial.suggest_float("lr", 1e-3, 2e-2, log=True)
         batch_size = trial.suggest_categorical("batch_size", [16, 32, 64])
+        hp = DKTHyperparameters(embed_dim, hidden_dim, dropout, lr, batch_size)
         model, _ = train_dkt(
-            train_sequences,
-            n_concepts,
-            device=device,
-            embed_dim=embed_dim,
-            hidden_dim=hidden_dim,
-            dropout=dropout,
-            lr=lr,
-            batch_size=batch_size,
-            epochs=epochs_per_trial,
-            seed=seed,
+            train_sequences, n_concepts, hp, epochs=epochs_per_trial, device=device, seed=seed
         )
         y_true, y_pred = predict_dkt(model, val_sequences, device)
         return roc_auc(y_true, y_pred)
@@ -82,6 +91,7 @@ class DKTOptunaModel(DKTModel):
         self.search_cfg = search_cfg
         self.search_: SearchResult | None = None
 
+    @override
     def fit(self, data: TrainingData) -> None:
         self.search_ = search_dkt(
             data.train.sequences,
@@ -109,11 +119,14 @@ class DKTOptunaModel(DKTModel):
             raise NotFittedError(f"{self.name} is not fitted")
         return self.search_
 
+    @override
     def mlflow_params(self) -> dict[str, Any]:
         return {f"dkt_optuna_{k}": v for k, v in self._search().best_params.items()}
 
+    @override
     def mlflow_metrics(self) -> dict[str, float]:
         return {"dkt_optuna_best_val_auc": self._search().best_val_auc}
 
+    @override
     def report(self) -> dict[str, Any]:
         return {"dkt_optuna_best_params": self._search().best_params}

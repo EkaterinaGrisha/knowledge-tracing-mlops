@@ -21,6 +21,7 @@ import pandas as pd
 import torch
 from mlflow.models.model import ModelInfo
 from mlflow.pyfunc.model import PythonModel, PythonModelContext
+from typing_extensions import override
 
 from .config import resolve_path
 from .models.base import NotFittedError
@@ -38,7 +39,9 @@ _BATCH_SIZE = 64
 class SupportsPredict(Protocol):
     """Anything that maps a history frame to a predictions frame."""
 
-    def predict(self, history: pd.DataFrame) -> pd.DataFrame: ...
+    def predict(self, history: pd.DataFrame) -> pd.DataFrame:
+        """Predictions for the students in ``history``."""
+        ...
 
 
 @dataclass
@@ -142,9 +145,11 @@ class DKTPredictor:
 class DKTPyfuncModel(PythonModel):
     """MLflow pyfunc flavour of :class:`DKTPredictor` for the Model Registry."""
 
+    @override
     def load_context(self, context: PythonModelContext) -> None:
         self._predictor = DKTPredictor.load(Path(context.artifacts["model_dir"]))
 
+    @override
     def predict(
         self,
         context: PythonModelContext,

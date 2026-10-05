@@ -54,6 +54,7 @@ def compare(baseline: dict, current: dict, tolerance: float, loose: dict[str, fl
 
 
 def main() -> int:
+    """Compare the two files given on the command line; returns the exit code."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("baseline", type=Path)
     parser.add_argument("current", type=Path)

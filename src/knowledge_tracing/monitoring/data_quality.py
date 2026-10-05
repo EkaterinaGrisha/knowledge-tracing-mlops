@@ -23,6 +23,11 @@ REQUIRED_COLUMNS = ["user_id", "order_idx", "skill_idx", "correct", "split"]
 
 
 def quality_report(long: pd.DataFrame) -> dict:
+    """Run the schema, null, label, range and uniqueness checks.
+
+    Returns:
+        ``{"passed": bool, "checks": {name: {"passed": bool, ...details}}}``.
+    """
     checks: dict[str, dict] = {}
 
     missing_cols = [c for c in REQUIRED_COLUMNS if c not in long.columns]

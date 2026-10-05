@@ -16,6 +16,8 @@ import psutil
 
 @dataclass
 class ResourceStats:
+    """Wall-clock time, peak memory and mean CPU load of one monitored stage."""
+
     label: str
     elapsed_s: float = 0.0
     peak_rss_mb: float = 0.0
@@ -23,6 +25,7 @@ class ResourceStats:
     samples: list[float] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, float]:
+        """Rounded figures for reports and MLflow."""
         return {
             "elapsed_s": round(self.elapsed_s, 3),
             "peak_rss_mb": round(self.peak_rss_mb, 1),
@@ -55,7 +58,7 @@ class ResourceMonitor:
         self._thread.start()
         return self
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc: object) -> None:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2)

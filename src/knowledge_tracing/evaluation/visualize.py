@@ -28,7 +28,7 @@ from sklearn.calibration import calibration_curve
 from sklearn.metrics import confusion_matrix, roc_curve
 
 from ..config import resolve_path
-from .metrics import DECISION_THRESHOLD
+from .metrics import DECISION_THRESHOLD, has_both_classes
 
 P = ParamSpec("P")
 
@@ -158,7 +158,7 @@ def plot_roc(preds: dict[str, tuple[np.ndarray, np.ndarray]], out_dir: Path) -> 
     fig = Figure(figsize=(6.5, 6))
     ax = fig.subplots()
     for name, (yt, yp) in preds.items():
-        if len(set(yt.tolist())) < 2:
+        if not has_both_classes(yt):
             continue
         fpr, tpr, _ = roc_curve(yt, yp)
         ax.plot(fpr, tpr, label=name, linewidth=2, color=_color(name))
