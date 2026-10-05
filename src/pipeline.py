@@ -16,6 +16,7 @@ import argparse
 import json
 
 import mlflow
+import numpy as np
 
 from .etl.extract import extract
 from .etl.load import load
@@ -51,7 +52,7 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
     mlflow.set_experiment(cfg["mlflow"]["experiment_name"])
 
     results: dict[str, dict] = {}
-    preds: dict[str, tuple] = {}
+    preds: dict[str, tuple[np.ndarray, np.ndarray]] = {}
     resources: dict[str, dict] = {}
 
     with mlflow.start_run(run_name=f"kt-{data_source}{'-quick' if quick else ''}"):
@@ -85,7 +86,9 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
 
         # ---------- 1) BKT baseline ----------
         with ResourceMonitor("bkt") as rm:
-            bkt_params = bkt_mod.fit_bkt_per_skill(train_seq, n_skills, cfg["models"]["bkt"]["em_iters"])
+            bkt_params = bkt_mod.fit_bkt_per_skill(
+                train_seq, n_skills, cfg["models"]["bkt"]["em_iters"]
+            )
             _, _, _, yt_bkt, yp_bkt = bkt_mod.evaluate_bkt(bkt_params, test_seq, n_skills)
         results["BKT"] = compute_metrics(yt_bkt, yp_bkt)
         preds["BKT"] = (yt_bkt, yp_bkt)
@@ -99,10 +102,16 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
         dcfg = cfg["models"]["dkt"]
         with ResourceMonitor("dkt") as rm:
             dkt_model, losses = dkt_mod.train_dkt(
-                train_traces, n_skills, device=device,
-                embed_dim=dcfg["embed_dim"], hidden_dim=dcfg["hidden_dim"],
-                dropout=dcfg["dropout"], epochs=dcfg["epochs"],
-                batch_size=dcfg["batch_size"], lr=dcfg["lr"], seed=seed,
+                train_traces,
+                n_skills,
+                device=device,
+                embed_dim=dcfg["embed_dim"],
+                hidden_dim=dcfg["hidden_dim"],
+                dropout=dcfg["dropout"],
+                epochs=dcfg["epochs"],
+                batch_size=dcfg["batch_size"],
+                lr=dcfg["lr"],
+                seed=seed,
             )
             _, _, _, yt_dkt, yp_dkt = dkt_mod.evaluate_dkt(dkt_model, test_traces, device)
         results["DKT"] = compute_metrics(yt_dkt, yp_dkt)
@@ -113,15 +122,25 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
         ocfg = cfg["models"]["dkt_optuna"]
         with ResourceMonitor("dkt_optuna") as rm:
             search = search_dkt(
-                train_traces, val_traces, n_skills,
-                n_trials=ocfg["n_trials"], epochs_per_trial=ocfg["epochs_per_trial"], seed=seed,
+                train_traces,
+                val_traces,
+                n_skills,
+                n_trials=ocfg["n_trials"],
+                epochs_per_trial=ocfg["epochs_per_trial"],
+                seed=seed,
             )
             best = search["best_params"]
             best_model, _ = dkt_mod.train_dkt(
-                train_traces, n_skills, device=device,
-                embed_dim=best["embed_dim"], hidden_dim=best["hidden_dim"],
-                dropout=best["dropout"], lr=best["lr"], batch_size=best["batch_size"],
-                epochs=dcfg["epochs"], seed=seed,
+                train_traces,
+                n_skills,
+                device=device,
+                embed_dim=best["embed_dim"],
+                hidden_dim=best["hidden_dim"],
+                dropout=best["dropout"],
+                lr=best["lr"],
+                batch_size=best["batch_size"],
+                epochs=dcfg["epochs"],
+                seed=seed,
             )
             _, _, _, yt_opt, yp_opt = dkt_mod.evaluate_dkt(best_model, test_traces, device)
         results["DKT+Optuna"] = compute_metrics(yt_opt, yp_opt)
@@ -137,9 +156,14 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
         acfg = cfg["models"]["automl_flaml"]
         with ResourceMonitor("automl_flaml") as rm:
             automl = train_automl(
-                Xtr, ytr, Xva, yva,
-                time_budget_s=acfg["time_budget_s"], metric=acfg["metric"],
-                estimator_list=acfg["estimator_list"], seed=seed,
+                Xtr,
+                ytr,
+                Xva,
+                yva,
+                time_budget_s=acfg["time_budget_s"],
+                metric=acfg["metric"],
+                estimator_list=acfg["estimator_list"],
+                seed=seed,
             )
             _, _, _, yt_aml, yp_aml = evaluate_automl(automl, Xte, yte)
         results["AutoML"] = compute_metrics(yt_aml, yp_aml)
@@ -151,8 +175,12 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
         ref = processed.features[processed.features["split"] == "train"]
         cur = processed.features[processed.features["split"] == "test"]
         drift = drift_report(ref, cur, processed.feature_cols, cfg)
-        LOG.info("Drift: %s (%d/%d features drifted)", drift["overall_status"],
-                 drift["n_significant_drift"], drift["n_features"])
+        LOG.info(
+            "Drift: %s (%d/%d features drifted)",
+            drift["overall_status"],
+            drift["n_significant_drift"],
+            drift["n_features"],
+        )
         mlflow.log_dict(drift, "monitoring/drift_report.json")
 
         # ---------- log metrics + resources ----------
@@ -172,15 +200,19 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
         figs.append(viz.plot_model_comparison(results, cfg))
         figs.append(viz.plot_roc(preds, cfg))
         figs.append(viz.plot_dkt_loss(losses, cfg))
-        best_name = max(results, key=lambda k: (results[k]["auc"] if results[k]["auc"] == results[k]["auc"] else -1))
-        figs.append(viz.plot_confusion(*preds[best_name], best_name, cfg))
-        figs.append(viz.plot_calibration(*preds[best_name], best_name, cfg))
+        best_name = max(
+            results,
+            key=lambda k: results[k]["auc"] if results[k]["auc"] == results[k]["auc"] else -1,
+        )
+        y_true_best, y_pred_best = preds[best_name]
+        figs.append(viz.plot_confusion(y_true_best, y_pred_best, best_name, cfg))
+        figs.append(viz.plot_calibration(y_true_best, y_pred_best, best_name, cfg))
         try:
             est = automl.model.estimator
             importances = getattr(est, "feature_importances_", None)
             if importances is not None:
                 figs.append(viz.plot_feature_importance(list(Xtr.columns), importances, cfg))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             LOG.warning("Feature importance unavailable: %s", exc)
         for f in figs:
             mlflow.log_artifact(str(f), artifact_path="figures")
@@ -199,8 +231,9 @@ def run(config_path: str, data_source: str, quick: bool = False) -> dict:
         }
         metrics_path = resolve(cfg["output"]["metrics_path"])
         metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(metrics_path, "w", encoding="utf-8") as fh:
+        with metrics_path.open("w", encoding="utf-8") as fh:
             json.dump(summary, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
         mlflow.log_artifact(str(metrics_path))
 
     _print_summary(summary)
@@ -212,8 +245,14 @@ def _print_summary(summary: dict) -> None:
     LOG.info("RESULTS (test, one-step-ahead correctness prediction)")
     LOG.info("%-12s %8s %8s %8s %8s", "model", "AUC", "ACC", "F1", "RMSE")
     for model, m in summary["results"].items():
-        LOG.info("%-12s %8.4f %8.4f %8.4f %8.4f", model, m["auc"], m["accuracy"], m["f1"], m["rmse"])
-    LOG.info("Best model: %s | AutoML estimator: %s", summary["best_model"], summary["automl_best_estimator"])
+        LOG.info(
+            "%-12s %8.4f %8.4f %8.4f %8.4f", model, m["auc"], m["accuracy"], m["f1"], m["rmse"]
+        )
+    LOG.info(
+        "Best model: %s | AutoML estimator: %s",
+        summary["best_model"],
+        summary["automl_best_estimator"],
+    )
     LOG.info("=" * 64)
 
 

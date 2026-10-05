@@ -1,4 +1,4 @@
-.PHONY: install etl all all-full test lint present mlflow docker docker-run clean
+.PHONY: install etl all all-full test lint format typecheck present mlflow docker docker-run clean
 
 # Every command runs inside the project virtualenv (.venv/) managed by Poetry.
 RUN ?= poetry run
@@ -8,9 +8,11 @@ RUN ?= poetry run
 # ./mlruns file store unless explicitly allowed (same flag as in the Dockerfile).
 OMP_GUARDS = KMP_DUPLICATE_LIB_OK=TRUE OMP_NUM_THREADS=1 MLFLOW_ALLOW_FILE_STORE=true
 
-# Create .venv/ inside the project and install the locked dependencies + dev tools.
+# Create .venv/ inside the project, install the locked dependencies + dev tools
+# and the git hooks (pre-commit, pre-push).
 install:
 	poetry install
+	$(RUN) pre-commit install
 
 # Run the full pipeline on the committed sample (fast, offline, used by CI).
 all:
@@ -26,8 +28,17 @@ etl:
 test:
 	$(OMP_GUARDS) $(RUN) pytest -q
 
+# All static checks from .pre-commit-config.yaml (ruff, mypy, file hygiene, ...).
+# no-commit-to-branch is skipped so the target also works on main.
 lint:
-	$(RUN) ruff check src tests
+	SKIP=no-commit-to-branch $(RUN) pre-commit run --all-files
+
+format:
+	$(RUN) ruff format .
+	$(RUN) ruff check --fix .
+
+typecheck:
+	$(RUN) mypy
 
 present:
 	poetry install --with presentation

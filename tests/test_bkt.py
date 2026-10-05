@@ -33,6 +33,6 @@ def test_per_skill_fit_and_eval():
         seqs.append({"skills": skills, "correct": correct})
     params = fit_bkt_per_skill(seqs, n_skills=3, em_iters=10)
     assert set(params.keys()) == {0, 1, 2}
-    auc, acc, rmse, yt, yp = evaluate_bkt(params, seqs, n_skills=3)
+    _auc, acc, _rmse, yt, yp = evaluate_bkt(params, seqs, n_skills=3)
     assert 0.0 <= acc <= 1.0
     assert len(yt) == len(yp)

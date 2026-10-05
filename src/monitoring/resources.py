@@ -49,7 +49,7 @@ class ResourceMonitor:
             self.stats.samples.append(self._proc.cpu_percent(None))
             self._stop.wait(self._interval)
 
-    def __enter__(self) -> "ResourceMonitor":
+    def __enter__(self) -> ResourceMonitor:
         self._t0 = time.perf_counter()
         self._thread = threading.Thread(target=self._sample, daemon=True)
         self._thread.start()

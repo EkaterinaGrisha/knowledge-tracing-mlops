@@ -36,10 +36,12 @@ def _download(url: str, dest: Path, retries: int = 4) -> None:
             resp.raise_for_status()
             dest.write_bytes(resp.content)
             return
-        except Exception as exc:  # noqa: BLE001 - network is a system boundary
+        except Exception as exc:
             last_err = exc
             wait = 2 ** (attempt + 1)
-            LOG.warning("Download failed (attempt %d): %s — retrying in %ds", attempt + 1, exc, wait)
+            LOG.warning(
+                "Download failed (attempt %d): %s — retrying in %ds", attempt + 1, exc, wait
+            )
             time.sleep(wait)
     raise RuntimeError(f"Could not download {url} after {retries} attempts") from last_err
 
@@ -118,5 +120,7 @@ def write_sample(df: pd.DataFrame, cfg: dict, n_students: int = 300) -> Path:
     out = resolve(cfg["data"]["sample_path"])
     out.parent.mkdir(parents=True, exist_ok=True)
     sample.to_csv(out, index=False)
-    LOG.info("Wrote sample (%d rows, %d students) -> %s", len(sample), sample["user_id"].nunique(), out)
+    LOG.info(
+        "Wrote sample (%d rows, %d students) -> %s", len(sample), sample["user_id"].nunique(), out
+    )
     return out

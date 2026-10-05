@@ -10,16 +10,21 @@ correctness of step t+1; loss is taken only on the skill actually seen next
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Tuple
 
 import numpy as np
 import torch
 from torch import nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
+from ..utils import get_logger
+
+LOG = get_logger()
+
 
 class DKTModel(nn.Module):
-    def __init__(self, n_concepts: int, embed_dim: int = 64, hidden_dim: int = 64, dropout: float = 0.2):
+    def __init__(
+        self, n_concepts: int, embed_dim: int = 64, hidden_dim: int = 64, dropout: float = 0.2
+    ):
         super().__init__()
         self.n_concepts = n_concepts
         self.embed = nn.Embedding(2 * n_concepts, embed_dim)
@@ -42,9 +47,9 @@ class StudentTrace:
     length: int
 
 
-def traces_from_sequences(sequences: List[dict]) -> List[StudentTrace]:
+def traces_from_sequences(sequences: list[dict]) -> list[StudentTrace]:
     """Build DKT traces directly from ordered ASSISTments sequences (no synthetic interleave)."""
-    traces: List[StudentTrace] = []
+    traces: list[StudentTrace] = []
     for s in sequences:
         skills = np.asarray(s["skills"], dtype=np.int64)
         correct = np.asarray(s["correct"], dtype=np.int64)
@@ -57,7 +62,7 @@ def make_input_indices(trace: StudentTrace) -> np.ndarray:
     return 2 * trace.concept_idx + trace.correct
 
 
-def collate_traces(traces: List[StudentTrace], device: torch.device):
+def collate_traces(traces: list[StudentTrace], device: torch.device):
     max_t = max(tr.length for tr in traces)
     B = len(traces)
     x = np.zeros((B, max_t), dtype=np.int64)
@@ -85,7 +90,7 @@ def _supervision_mask(lengths: torch.Tensor, max_t: int) -> torch.Tensor:
 
 
 def train_dkt(
-    train_traces: List[StudentTrace],
+    train_traces: list[StudentTrace],
     n_concepts: int,
     *,
     device: torch.device,
@@ -97,14 +102,15 @@ def train_dkt(
     lr: float = 5e-3,
     seed: int = 42,
     verbose: bool = False,
-) -> Tuple[DKTModel, List[float]]:
+) -> tuple[DKTModel, list[float]]:
     torch.manual_seed(seed)
-    np.random.seed(seed)
+    # Also seed NumPy's global RNG for third-party code that relies on it.
+    np.random.seed(seed)  # noqa: NPY002
     model = DKTModel(n_concepts, embed_dim, hidden_dim, dropout).to(device)
     optim = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = nn.BCEWithLogitsLoss(reduction="none")
     rng = np.random.default_rng(seed)
-    losses: List[float] = []
+    losses: list[float] = []
     for epoch in range(epochs):
         model.train()
         order = rng.permutation(len(train_traces))
@@ -127,12 +133,14 @@ def train_dkt(
         avg = epoch_loss / max(n_batches, 1)
         losses.append(avg)
         if verbose and (epoch + 1) % 5 == 0:
-            print(f"[DKT] epoch {epoch + 1:2d}/{epochs} loss={avg:.4f}")
+            LOG.info("[DKT] epoch %2d/%d loss=%.4f", epoch + 1, epochs, avg)
     return model, losses
 
 
 @torch.no_grad()
-def evaluate_dkt(model: DKTModel, traces: List[StudentTrace], device: torch.device, batch_size: int = 64):
+def evaluate_dkt(
+    model: DKTModel, traces: list[StudentTrace], device: torch.device, batch_size: int = 64
+):
     from sklearn.metrics import accuracy_score, mean_squared_error, roc_auc_score
 
     model.eval()

@@ -12,14 +12,15 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
-import pandas as pd  # noqa: E402
-import seaborn as sns  # noqa: E402
-from sklearn.calibration import calibration_curve  # noqa: E402
-from sklearn.metrics import confusion_matrix, roc_curve  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from matplotlib.container import BarContainer
+from sklearn.calibration import calibration_curve
+from sklearn.metrics import confusion_matrix, roc_curve
 
-from ..utils import get_logger, resolve  # noqa: E402
+from ..utils import get_logger, resolve
 
 LOG = get_logger()
 
@@ -109,7 +110,8 @@ def plot_model_comparison(results: dict[str, dict], cfg: dict) -> Path:
     fig, ax = plt.subplots(figsize=(9, 5))
     sns.barplot(data=tidy, x="Модель", y="value", hue="Метрика", palette="deep", ax=ax)
     for container in ax.containers:
-        ax.bar_label(container, fmt="%.3f", fontsize=8, padding=2)
+        if isinstance(container, BarContainer):
+            ax.bar_label(container, fmt="%.3f", fontsize=8, padding=2)
     ax.set_ylim(0, 1.0)
     ax.set_ylabel("значение метрики")
     ax.set_xlabel("")
@@ -136,8 +138,14 @@ def plot_confusion(yt: np.ndarray, yp: np.ndarray, name: str, cfg: dict) -> Path
     cm = confusion_matrix(yt, (yp > 0.5).astype(int))
     fig, ax = plt.subplots(figsize=(5, 4.5))
     sns.heatmap(
-        cm, annot=True, fmt="d", cmap="Blues", cbar=False,
-        xticklabels=["неверно", "верно"], yticklabels=["неверно", "верно"], ax=ax,
+        cm,
+        annot=True,
+        fmt="d",
+        cmap="Blues",
+        cbar=False,
+        xticklabels=["неверно", "верно"],
+        yticklabels=["неверно", "верно"],
+        ax=ax,
     )
     ax.set_xlabel("предсказано")
     ax.set_ylabel("истинно")

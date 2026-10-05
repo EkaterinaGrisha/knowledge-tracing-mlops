@@ -17,7 +17,7 @@ def load_config(path: str | os.PathLike = "config/config.yaml") -> dict[str, Any
     cfg_path = Path(path)
     if not cfg_path.is_absolute():
         cfg_path = ROOT / cfg_path
-    with open(cfg_path, "r", encoding="utf-8") as fh:
+    with cfg_path.open(encoding="utf-8") as fh:
         return yaml.safe_load(fh)
 
 

@@ -1,0 +1,70 @@
+# Git hooks that run automatically on `git commit` / `git push`.
+# Install once after cloning:  make install  (or: poetry run pre-commit install)
+# Run on the whole repository:  poetry run pre-commit run --all-files
+default_install_hook_types: [pre-commit, pre-push]
+# Checks run on commit; only the test hook below opts into pre-push.
+default_stages: [pre-commit]
+default_language_version:
+  python: python3.11
+
+repos:
+  # Generic file hygiene and safety checks.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+      - id: debug-statements
+      # main changes only through pull requests (part of the approval workflow).
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
+
+  # Linter + formatter (same version as the ruff pinned in poetry.lock).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.9
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+
+  # Notebook outputs are not versioned: results live in reports/ and MLflow.
+  - repo: https://github.com/kynan/nbstripout
+    rev: 0.9.1
+    hooks:
+      - id: nbstripout
+
+  # Hooks that run inside the project virtualenv (.venv) managed by Poetry,
+  # so they see exactly the locked versions of torch, pandas, etc.
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (type check in project .venv)
+        entry: poetry run mypy
+        language: system
+        types: [python]
+        pass_filenames: false
+        require_serial: true
+
+      - id: poetry-check
+        name: poetry check --lock
+        entry: poetry check --lock
+        language: system
+        files: ^(pyproject\.toml|poetry\.lock)$
+        pass_filenames: false
+
+      - id: pytest-fast
+        name: pytest (fast tests, before push)
+        entry: poetry run pytest -m "not slow" -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
