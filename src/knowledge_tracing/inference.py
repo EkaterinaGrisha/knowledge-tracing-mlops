@@ -168,12 +168,14 @@ def log_predictor(
 ) -> ModelInfo:
     """Log a packaged model to the active MLflow run, optionally registering it.
 
-    The knowledge_tracing package is bundled with the model (``code_paths``),
-    so the registered model loads in any environment with the pinned libraries.
+    The model is defined by code (``serving_model.py``) rather than a pickled
+    object, and the knowledge_tracing package is bundled with it
+    (``code_paths``), so the registered model loads in any environment with
+    the pinned libraries.
     """
     return mlflow.pyfunc.log_model(
         name="model",
-        python_model=DKTPyfuncModel(),
+        python_model=str(Path(__file__).with_name("serving_model.py")),
         artifacts={"model_dir": str(model_dir)},
         code_paths=[str(Path(__file__).resolve().parent)],
         pip_requirements=_pip_requirements(),

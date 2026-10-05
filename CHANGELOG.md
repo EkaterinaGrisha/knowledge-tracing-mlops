@@ -22,7 +22,8 @@
 - **Упаковка и регистрация модели**: DKT+Optuna сохраняется в
   `artifacts/model`, логируется в MLflow как pyfunc-модель и при test AUC не
   ниже `serving.min_test_auc` регистрируется как `challenger`;
-  `kt promote` переводит её в `champion`, не допуская ухудшения.
+  `kt promote` переводит её в `champion`, не допуская ухудшения. Модель
+  логируется по схеме MLflow «models from code» (без pickle-объекта).
 - **MODEL_CARD.md** с оценкой по подгруппам (`scripts/sliced_metrics.py`).
 - **BPMN-процесс** жизненного цикла и согласования модели
   (`docs/model_lifecycle.md`, `docs/bpmn/`), шаблон Pull Request, `CODEOWNERS`.
