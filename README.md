@@ -9,7 +9,6 @@
 Репозиторий — копия проекта
 [knowledge-tracing](https://github.com/EkaterinaGrisha/knowledge-tracing),
 в которой выполнено домашнее задание по подготовке ML-проекта к production.
-Исходный репозиторий не изменялся.
 
 ## Домашнее задание: где что находится
 
@@ -25,7 +24,7 @@
   интерфейс, вместо `print` используется логирование, ошибки завершают
   запуск с понятным кодом выхода. Модель DKT+Optuna упаковывается для
   `kt predict` и при достаточном качестве регистрируется в MLflow Model
-  Registry. Тесты — [tests/](tests), покрытие кода пакета не ниже 90 %.
+  Registry. Тесты — [tests/](tests).
 - **Poetry, pre-commit, линтеры.** Зависимости описаны в
   [pyproject.toml](pyproject.toml), точные версии зафиксированы в
   [poetry.lock](poetry.lock); там же, в `pyproject.toml`, настроены ruff и
@@ -34,10 +33,9 @@
   ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 - **Виртуальное окружение в Git-репозитории.** Poetry создаёт `.venv` внутри
   проекта ([poetry.toml](poetry.toml)), версия Python зафиксирована в
-  [.python-version](.python-version). Сама папка `.venv` в Git не хранится
-  (больше гигабайта, зависит от платформы): по `poetry.lock` команда
-  `make install` воссоздаёт окружение с теми же версиями пакетов на любой
-  машине. VS Code берёт интерпретатор из `.venv`
+  [.python-version](.python-version). Сама папка `.venv` в Git не хранится:
+  по `poetry.lock` команда `make install` воссоздаёт окружение с теми же версиями
+  пакетов. VS Code берёт интерпретатор из `.venv`
   ([.vscode/settings.json](.vscode/settings.json)), Docker-образ собирается
   по тому же `poetry.lock`.
 
