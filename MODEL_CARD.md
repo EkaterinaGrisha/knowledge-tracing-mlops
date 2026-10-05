@@ -3,18 +3,15 @@
 Карточка модели по методологии *Model Cards for Model Reporting*
 (Mitchell et al., 2019). Описывает модель из полного прогона пайплайна
 `kt train --data-source full`, зарегистрированную в MLflow Model Registry как
-`kt-dkt`. Все цифры взяты из артефактов этого прогона:
-[`reports/metrics.json`](reports/metrics.json),
-[`reports/sliced_metrics.json`](reports/sliced_metrics.json) и описания
-пакета модели `artifacts/model/model.json`.
+`kt-dkt`. Метрики и характеристики данных взяты из результатов этого
+прогона: [`reports/metrics.json`](reports/metrics.json) и
+[`reports/sliced_metrics.json`](reports/sliced_metrics.json).
 
 | | |
 |---|---|
 | **Модель** | DKT+Optuna — Deep Knowledge Tracing (LSTM) с архитектурой, подобранной Optuna |
-| **Версия** | `kt-dkt` версия 4 в MLflow Model Registry; пакет `knowledge-tracing` 2.0.0 |
 | **Статус** | `challenger` (прошла порог регистрации) → `champion` после согласования и `kt promote` |
-| **Обучена** | 2026-10-05 08:51 UTC, полный датасет, seed 42 |
-| **Запуск MLflow** | `5c4025d95da44d93b386bc02a945c26d` |
+| **Обучена** | 5 октября 2026 г., полный датасет, seed 42 |
 | **Задача** | вероятность того, что студент правильно решит следующее задание по навыку |
 | **Качество** | ROC-AUC на тесте **0.8036** (лучшая из четырёх моделей) |
 | **Автор** | Григорьева Е.С. |
@@ -266,7 +263,7 @@ AUC по тем же предсказаниям — 0.8036, предсказан
 
 ```bash
 kt predict --input examples/history.csv                                 # локальный пакет artifacts/model
-kt predict --model models:/kt-dkt@champion --input examples/history.csv  # рабочая версия из реестра MLflow
+kt predict --model models:/kt-dkt@champion --input examples/history.csv  # модель champion из реестра MLflow
 ```
 
 ```python
@@ -277,18 +274,9 @@ model = DKTPredictor.load("artifacts/model")
 predictions = model.predict(pd.read_csv("examples/history.csv"))
 ```
 
-## 10. Версии и жизненный цикл
+## 10. Жизненный цикл
 
-| Версия `kt-dkt` | Дата | Данные | Test AUC | Статус |
-|---|---|---|---|---|
-| 4 | 2026-10-05 | ASSISTments 2009, полный датасет | 0.8036 | `challenger` → `champion` после согласования |
-
-Номер версии — из реестра MLflow автора (версии 1–3 — проверочные
-smoke-прогоны на sample, созданные до правила «smoke-прогоны не
-регистрируются»).
-
-Новая версия проходит процесс, описанный в
+Каждая новая модель проходит процесс, описанный в
 [docs/model_lifecycle.md](docs/model_lifecycle.md) (BPMN): автоматические
 проверки пайплайна и CI, ревью, согласование по этой карточке и продвижение
-командой `kt promote`. Карточка обновляется вместе с каждой новой версией
-модели (пункт чек-листа Pull Request).
+командой `kt promote`. Карточка обновляется при каждом переобучении модели.

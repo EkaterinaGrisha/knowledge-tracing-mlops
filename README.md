@@ -4,39 +4,54 @@
 
 **Автор:** Григорьева Е.С.
 
-**Дата:** май 2026 — версия 1.0 (исходный проект); октябрь 2026 — версия
-2.0.0, подготовка к production ([отчёт по практике](REPORT.md))
+**Дата:** май 2026, доработка — октябрь 2026
 
-**Репозиторий:** <https://github.com/EkaterinaGrisha/knowledge-tracing-mlops>
+Репозиторий — копия проекта
+[knowledge-tracing](https://github.com/EkaterinaGrisha/knowledge-tracing),
+в которой выполнено домашнее задание по подготовке ML-проекта к production.
+Исходный репозиторий не изменялся.
 
-> **Примечание.** Этот репозиторий — копия проекта
-> [knowledge-tracing](https://github.com/EkaterinaGrisha/knowledge-tracing),
-> созданная для домашнего задания по подготовке ML-проекта к production.
-> Исходный репозиторий не изменяется; история коммитов перенесена полностью,
-> исходное состояние отмечено тегом `v1.0.0-baseline`.
+## Домашнее задание: где что находится
 
-**Документация:**
+- **Model Card** — [MODEL_CARD.md](MODEL_CARD.md).
+- **BPMN-процесс жизненного цикла модели и workflow согласования** —
+  [docs/model_lifecycle.md](docs/model_lifecycle.md), диаграмма в
+  [docs/bpmn/](docs/bpmn).
+- **Тесты hh.ru** — [docs/hh_tests/hh_tests.png](docs/hh_tests/hh_tests.png).
+- **Рефакторинг под production-стандарты.** Код из `src/` перенесён в
+  устанавливаемый пакет [src/knowledge_tracing](src/knowledge_tracing) с
+  командой `kt` (`etl`, `train`, `predict`, `promote`) вместо shell-скриптов.
+  Конфигурация проверяется pydantic-моделью, модели реализуют общий
+  интерфейс, вместо `print` используется логирование, ошибки завершают
+  запуск с понятным кодом выхода. Модель DKT+Optuna упаковывается для
+  `kt predict` и при достаточном качестве регистрируется в MLflow Model
+  Registry. Тесты — [tests/](tests), покрытие кода пакета не ниже 90 %.
+- **Poetry, pre-commit, линтеры.** Зависимости описаны в
+  [pyproject.toml](pyproject.toml), точные версии зафиксированы в
+  [poetry.lock](poetry.lock); там же, в `pyproject.toml`, настроены ruff и
+  mypy. Git-хуки — в [.pre-commit-config.yaml](.pre-commit-config.yaml);
+  те же проверки и тесты запускает CI
+  ([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+- **Виртуальное окружение в Git-репозитории.** Poetry создаёт `.venv` внутри
+  проекта ([poetry.toml](poetry.toml)), версия Python зафиксирована в
+  [.python-version](.python-version). Сама папка `.venv` в Git не хранится
+  (больше гигабайта, зависит от платформы): по `poetry.lock` команда
+  `make install` воссоздаёт окружение с теми же версиями пакетов на любой
+  машине. VS Code берёт интерпретатор из `.venv`
+  ([.vscode/settings.json](.vscode/settings.json)), Docker-образ собирается
+  по тому же `poetry.lock`.
 
-- [Отчёт по практике](REPORT.md) — подготовка проекта к production: что
-  сделано по каждому пункту задания, тесты hh.ru, как проверить;
-- [Model Card](MODEL_CARD.md) — назначение, данные, качество (в том числе
-  по подгруппам), ограничения и риски модели `kt-dkt`;
-- [Жизненный цикл модели и workflow согласования](docs/model_lifecycle.md) —
-  BPMN-процесс: от задачи через обучение, проверки, ревью и согласование до
-  продвижения в рабочую версию и мониторинга;
-- [CHANGELOG](CHANGELOG.md) — что изменилось в версии 2.0.0 по сравнению с
-  исходной.
-
-**Быстрый старт** (Python 3.11, [Poetry](https://python-poetry.org/) 2.x):
+Запуск (Python 3.11, [Poetry](https://python-poetry.org/) 2.x):
 
 ```bash
-make install       # окружение .venv строго по poetry.lock + git-хуки
-make test          # тесты с отчётом о покрытии
-make train-quick   # пайплайн на закоммиченной выборке (~30 секунд)
+make install       # .venv по poetry.lock + git-хуки pre-commit
+make lint          # все хуки pre-commit: ruff, mypy и др.
+make test          # pytest с отчётом о покрытии
+make train-quick   # пайплайн на выборке из репозитория
 make predict       # P(correct) по навыкам для examples/history.csv
 ```
 
-Подробности — в [приложении Б](#приложение-б-воспроизведение-результатов).
+Остальные команды — в [приложении Б](#приложение-б-воспроизведение-результатов).
 
 ---
 
@@ -466,9 +481,9 @@ reg_alpha = 0.0053, reg_lambda = 0.077
 ```
 
 FLAML всегда расходует весь бюджет времени, поэтому число испытаний и
-выбранная конфигурация зависят от скорости компьютера: в исходной версии
-проекта тот же поиск остановился на другой конфигурации xgboost с близким
-качеством (AUC 0.7914 против 0.7919).
+выбранная конфигурация зависят от скорости компьютера: до рефакторинга тот
+же поиск остановился на другой конфигурации xgboost с близким качеством
+(AUC 0.7914 против 0.7919).
 
 Роль AutoML в проекте — продемонстрировать, что результат, сопоставимый со
 специализированной нейросетевой моделью, может быть получен полностью
@@ -635,11 +650,10 @@ kt predict --model models:/kt-dkt@champion --input examples/history.csv  # из 
 ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 109 навыков, сплит
 70 / 10 / 20 по студентам, протокол one-step-ahead).
 
-Результаты получены полным прогоном `kt train --data-source full` текущей
-версии кода (пакет `knowledge-tracing` 2.0.0) и опубликованы в
-`reports/metrics.json`. BKT и DKT воспроизвели результаты исходной версии
-проекта (тег `v1.0.0-baseline`) по всем метрикам до четвёртого знака;
-DKT+Optuna — тот же AUC при немного иной найденной конфигурации; AutoML
+Результаты получены полным прогоном `kt train --data-source full` и
+опубликованы в `reports/metrics.json`. После рефакторинга BKT и DKT
+воспроизвели результаты исходного проекта по всем метрикам до четвёртого
+знака; DKT+Optuna — тот же AUC при немного иной найденной конфигурации; AutoML
 отличается в пределах, ожидаемых при бюджете по времени. Оценка лучшей модели
 по подгруппам (длина истории студента, частота навыка) — в
 [MODEL_CARD.md](MODEL_CARD.md).
@@ -691,11 +705,10 @@ DKT+Optuna — тот же AUC при немного иной найденной
 
 ### 9.4 Снимки MLflow UI
 
-Снимки сделаны на исходной версии проекта (тег `v1.0.0-baseline`,
-файловое хранилище MLflow), поэтому значения ресурсов на них относятся к
-исходному прогону. Текущая версия хранит запуски в SQLite (`make mlflow`);
-интерфейс тот же, и в нём дополнительно доступен Model Registry с моделью
-`kt-dkt`.
+Снимки сделаны до рефакторинга (файловое хранилище MLflow), поэтому
+значения ресурсов на них относятся к исходному прогону. Сейчас запуски
+хранятся в SQLite (`make mlflow`); интерфейс тот же, и в нём дополнительно
+доступен Model Registry с моделью `kt-dkt`.
 
 Иллюстрации ниже фиксируют состояние UI MLflow после исходного прогона.
 Полный набор из 14 скриншотов доступен в `reports/screenshots/`.
@@ -1059,7 +1072,6 @@ Workflow срабатывает на каждый push в любую ветку 
 knowledge-tracing-mlops/
 ├── README.md                       # настоящий отчёт
 ├── MODEL_CARD.md                   # карточка модели kt-dkt (DKT+Optuna)
-├── CHANGELOG.md                    # изменения версий
 ├── pyproject.toml                  # пакет и зависимости (Poetry), настройки pytest, coverage, ruff, mypy
 ├── poetry.lock                     # точные версии всех пакетов
 ├── poetry.toml                     # .venv создаётся внутри проекта
@@ -1070,10 +1082,7 @@ knowledge-tracing-mlops/
 ├── docker-compose.yml              # два сервиса: pipeline + MLflow UI
 ├── .dockerignore / .gitignore
 ├── .vscode/                        # интерпретатор из .venv, pytest, ruff и mypy в VS Code
-├── .github/
-│   ├── workflows/ci.yml            # GitHub Actions: pre-commit, pytest + coverage, docker build + smoke
-│   ├── pull_request_template.md    # чек-лист согласования изменений
-│   └── CODEOWNERS                  # обязательные ревьюеры
+├── .github/workflows/ci.yml        # GitHub Actions: pre-commit, pytest + coverage, docker build + smoke
 ├── config/
 │   ├── config.yaml                 # гиперпараметры, пути, MLflow, порог регистрации модели
 │   └── quick.yaml                  # оверлей с минимальными бюджетами (kt train --quick)
@@ -1083,11 +1092,10 @@ knowledge-tracing-mlops/
 │   └── processed/                  # выход стадии Load (не в репозитории)
 ├── examples/history.csv            # пример истории студентов для kt predict
 ├── notebooks/train.ipynb           # пошаговый прогон пайплайна (без выводов ячеек)
-├── REPORT.md                       # отчёт по практике: подготовка к production
 ├── docs/
-│   ├── hh_tests/                   # результаты тестов hh.ru (PNG, PDF, таблица)
 │   ├── model_lifecycle.md          # BPMN-процесс жизненного цикла и согласования
-│   ├── bpmn/                       # model_lifecycle.bpmn (BPMN 2.0) + экспорт SVG/PNG
+│   ├── bpmn/                       # model_lifecycle.bpmn (BPMN 2.0) и его изображение PNG
+│   ├── hh_tests/                   # скриншот тестов hh.ru
 │   └── baseline/                   # эталонные метрики для регрессионной проверки
 ├── reports/                        # опубликованные результаты (make publish-report)
 │   ├── metrics.json

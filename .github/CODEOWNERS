@@ -1,6 +1,0 @@
-# Owners are requested for review automatically (docs/model_lifecycle.md:
-# "Code review и model review").
-*                   @EkaterinaGrisha
-# Changes to the model description need the model owner's approval.
-MODEL_CARD.md       @EkaterinaGrisha
-config/             @EkaterinaGrisha
