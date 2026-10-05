@@ -12,6 +12,10 @@
 > Исходный репозиторий не изменяется; история коммитов перенесена полностью,
 > исходное состояние отмечено тегом `v1.0.0-baseline`.
 
+**Документация модели:** [Model Card](MODEL_CARD.md) — назначение,
+данные, качество (в том числе по подгруппам), ограничения и риски модели
+`kt-dkt`.
+
 ---
 
 ## Содержание
@@ -614,7 +618,9 @@ ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 
 `reports/metrics.json`. BKT и DKT воспроизвели результаты исходной версии
 проекта (тег `v1.0.0-baseline`) по всем метрикам до четвёртого знака;
 DKT+Optuna — тот же AUC при немного иной найденной конфигурации; AutoML
-отличается в пределах, ожидаемых при бюджете по времени.
+отличается в пределах, ожидаемых при бюджете по времени. Оценка лучшей модели
+по подгруппам (длина истории студента, частота навыка) — в
+[MODEL_CARD.md](MODEL_CARD.md).
 
 ### 9.1 Сводная таблица метрик качества
 
@@ -1030,6 +1036,7 @@ Workflow срабатывает на каждый push в любую ветку 
 ```
 knowledge-tracing-mlops/
 ├── README.md                       # настоящий отчёт
+├── MODEL_CARD.md                   # карточка модели kt-dkt (DKT+Optuna)
 ├── pyproject.toml                  # пакет и зависимости (Poetry), настройки pytest, coverage, ruff, mypy
 ├── poetry.lock                     # точные версии всех пакетов
 ├── poetry.toml                     # .venv создаётся внутри проекта
@@ -1053,13 +1060,15 @@ knowledge-tracing-mlops/
 ├── docs/baseline/                  # эталонные метрики для регрессионной проверки
 ├── reports/                        # опубликованные результаты (make publish-report)
 │   ├── metrics.json
+│   ├── sliced_metrics.json         # качество модели по подгруппам (Model Card)
 │   ├── figures/                    # 7 PNG-графиков
 │   └── screenshots/                # 14 скриншотов MLflow UI
 ├── presentation/                   # презентация и текст защиты
 ├── scripts/
 │   ├── build_deck.py               # автогенерация PPTX из reports/
 │   ├── build_notebook.py           # генерация notebooks/train.ipynb
-│   └── compare_metrics.py          # регрессионная проверка метрик против эталона
+│   ├── compare_metrics.py          # регрессионная проверка метрик против эталона
+│   └── sliced_metrics.py           # оценка модели по подгруппам для Model Card
 ├── src/knowledge_tracing/          # устанавливаемый пакет (poetry install)
 │   ├── __init__.py / __main__.py   # версия пакета; python -m knowledge_tracing
 │   ├── cli.py                      # команда kt: etl, train, predict, promote
