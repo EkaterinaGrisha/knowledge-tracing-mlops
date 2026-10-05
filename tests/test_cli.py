@@ -43,8 +43,8 @@ def test_failed_quality_gate_stops_before_training(project_dir, monkeypatch):
     assert not (project_dir / "artifacts" / "metrics.json").exists()
 
 
-@pytest.mark.slow
-def test_train_register_predict_promote(project_dir):
+def _tiny_overlay(project_dir: Path) -> Path:
+    """Overlay with minimal budgets and a low registration threshold (fast end-to-end runs)."""
     tiny = project_dir / "config" / "tiny.yaml"
     tiny.write_text(
         yaml.safe_dump(
@@ -60,7 +60,13 @@ def test_train_register_predict_promote(project_dir):
         ),
         encoding="utf-8",
     )
-    assert main(["train", "--quick", "--override", str(tiny)]) == 0
+    return tiny
+
+
+@pytest.mark.slow
+def test_train_register_predict_promote(project_dir):
+    tiny = _tiny_overlay(project_dir)
+    assert main(["train", "--override", str(tiny)]) == 0
 
     metrics = json.loads((project_dir / "artifacts" / "metrics.json").read_text(encoding="utf-8"))
     assert set(metrics["results"]) == {"BKT", "DKT", "DKT+Optuna", "AutoML"}
@@ -86,3 +92,12 @@ def test_train_register_predict_promote(project_dir):
     client = MlflowClient()
     champion = client.get_model_version_by_alias("kt-dkt", "champion")
     assert str(champion.version) == serving["version"]
+
+
+@pytest.mark.slow
+def test_quick_run_is_not_registered(project_dir):
+    assert main(["train", "--quick", "--override", str(_tiny_overlay(project_dir))]) == 0
+    metrics = json.loads((project_dir / "artifacts" / "metrics.json").read_text(encoding="utf-8"))
+    assert metrics["serving"]["registered"] is False
+    assert (project_dir / "artifacts" / "model" / "model.pt").exists()
+    assert MlflowClient().search_registered_models() == []

@@ -205,8 +205,9 @@ def package_model(
     The model configured in ``serving.model`` is always written to
     ``output.model_dir`` and logged to the run; it becomes a new registry version
     with the ``challenger`` alias only if its test AUC reaches
-    ``serving.min_test_auc``. Promotion to ``champion`` is a separate,
-    approved step (``kt promote``).
+    ``serving.min_test_auc`` and the run is not a smoke run: reduced ``quick``
+    budgets do not produce a release candidate. Promotion to ``champion`` is a
+    separate, approved step (``kt promote``).
     """
     run = runs[cfg.serving.model]
     if not isinstance(run.model, DKTModel):
@@ -230,27 +231,30 @@ def package_model(
 
     name = cfg.serving.registered_model_name
     passed = not math.isnan(test_auc) and test_auc >= cfg.serving.min_test_auc
+    register = passed and not quick
     info = log_predictor(
-        model_dir, _history_example(processed, predictor.skill_ids), name if passed else None
+        model_dir, _history_example(processed, predictor.skill_ids), name if register else None
     )
     serving: dict[str, Any] = {
         "model": run.model.name,
         "path": str(cfg.output.model_dir),
         "test_auc": test_auc,
         "min_test_auc": cfg.serving.min_test_auc,
-        "registered": passed,
+        "registered": register,
     }
-    if passed:
+    if register:
         version = str(info.registered_model_version)
         mark_challenger(
             name,
             version,
-            {TEST_AUC_TAG: f"{test_auc:.6f}", "data_source": data_source, "quick": str(quick)},
+            {TEST_AUC_TAG: f"{test_auc:.6f}", "data_source": data_source},
         )
         serving.update(registered_model=name, version=version, alias=CHALLENGER)
         LOG.info(
             "Registered %s version %s as '%s' (test AUC %.4f)", name, version, CHALLENGER, test_auc
         )
+    elif quick:
+        LOG.info("Smoke run (--quick): model saved to %s, not registered", cfg.output.model_dir)
     else:
         LOG.warning(
             "%s test AUC %.4f is below serving.min_test_auc %.2f: saved to %s, not registered",
