@@ -38,46 +38,46 @@
       "n": 44581
     },
     "DKT+Optuna": {
-      "auc": 0.8035947659655736,
-      "accuracy": 0.7511495928758888,
-      "f1": 0.819668400520156,
-      "precision": 0.7609633899737422,
-      "recall": 0.8881882551872335,
-      "rmse": 0.41156386189738153,
-      "log_loss": 0.5109145850091315,
+      "auc": 0.8036069054286856,
+      "accuracy": 0.752540319867208,
+      "f1": 0.8195262400209397,
+      "precision": 0.7650346660150881,
+      "recall": 0.8823757353718251,
+      "rmse": 0.4110146444933453,
+      "log_loss": 0.5106129536512155,
       "n": 44581
     },
     "AutoML": {
-      "auc": 0.7914006362495033,
-      "accuracy": 0.7454633651577625,
-      "f1": 0.8173244295344495,
-      "precision": 0.7513382986151519,
-      "recall": 0.8960169315106515,
-      "rmse": 0.41493643283454273,
-      "log_loss": 0.5162057063774352,
+      "auc": 0.7918805195308477,
+      "accuracy": 0.7455074636738473,
+      "f1": 0.8169795763034378,
+      "precision": 0.7523217101804801,
+      "recall": 0.8937964055235584,
+      "rmse": 0.41462191578000956,
+      "log_loss": 0.5152615071986145,
       "n": 45353
     }
   },
   "resources": {
     "BKT": {
-      "elapsed_s": 13.538,
-      "peak_rss_mb": 587.7,
-      "avg_cpu_pct": 98.9
+      "elapsed_s": 12.946,
+      "peak_rss_mb": 686.2,
+      "avg_cpu_pct": 99.4
     },
     "DKT": {
-      "elapsed_s": 63.733,
-      "peak_rss_mb": 625.8,
-      "avg_cpu_pct": 99.3
+      "elapsed_s": 63.435,
+      "peak_rss_mb": 783.5,
+      "avg_cpu_pct": 99.6
     },
     "DKT+Optuna": {
-      "elapsed_s": 712.642,
-      "peak_rss_mb": 298.3,
-      "avg_cpu_pct": 99.5
+      "elapsed_s": 676.211,
+      "peak_rss_mb": 886.5,
+      "avg_cpu_pct": 99.8
     },
     "AutoML": {
-      "elapsed_s": 617.828,
-      "peak_rss_mb": 2388.8,
-      "avg_cpu_pct": 396.4
+      "elapsed_s": 601.31,
+      "peak_rss_mb": 3728.2,
+      "avg_cpu_pct": 579.1
     }
   },
   "best_model": "DKT+Optuna",
@@ -137,12 +137,22 @@
     }
   },
   "data_quality_passed": true,
-  "automl_best_estimator": "xgboost",
+  "serving": {
+    "model": "DKT+Optuna",
+    "path": "artifacts/model",
+    "test_auc": 0.8036069054286856,
+    "min_test_auc": 0.75,
+    "registered": true,
+    "registered_model": "kt-dkt",
+    "version": "4",
+    "alias": "challenger"
+  },
   "dkt_optuna_best_params": {
     "embed_dim": 32,
     "hidden_dim": 128,
-    "dropout": 0.491382079803719,
-    "lr": 0.0028594472572659757,
+    "dropout": 0.49248699887801306,
+    "lr": 0.004327533840795527,
     "batch_size": 32
-  }
+  },
+  "automl_best_estimator": "xgboost"
 }
