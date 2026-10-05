@@ -1,0 +1,82 @@
+{
+  "model": "DKT+Optuna",
+  "data_source": "full",
+  "overall": {
+    "n": 44581,
+    "auc": 0.8036
+  },
+  "by_history_length": [
+    {
+      "group": "1–4",
+      "n": 3032,
+      "auc": 0.8194,
+      "accuracy": 0.7546,
+      "share_correct": 0.6438
+    },
+    {
+      "group": "5–9",
+      "n": 3387,
+      "auc": 0.802,
+      "accuracy": 0.7706,
+      "share_correct": 0.6569
+    },
+    {
+      "group": "10–19",
+      "n": 5350,
+      "auc": 0.8144,
+      "accuracy": 0.7495,
+      "share_correct": 0.6187
+    },
+    {
+      "group": "20–49",
+      "n": 10512,
+      "auc": 0.8088,
+      "accuracy": 0.7507,
+      "share_correct": 0.6141
+    },
+    {
+      "group": "50+",
+      "n": 22300,
+      "auc": 0.7963,
+      "accuracy": 0.7511,
+      "share_correct": 0.6478
+    }
+  ],
+  "by_skill_frequency": [
+    {
+      "group": "редкие",
+      "n": 873,
+      "auc": 0.7221,
+      "accuracy": 0.6632,
+      "share_correct": 0.6105
+    },
+    {
+      "group": "средние",
+      "n": 6163,
+      "auc": 0.8383,
+      "accuracy": 0.7753,
+      "share_correct": 0.6485
+    },
+    {
+      "group": "частые",
+      "n": 37545,
+      "auc": 0.8007,
+      "accuracy": 0.7509,
+      "share_correct": 0.6354
+    }
+  ],
+  "skill_frequency_thresholds": {
+    "редкие": [
+      0,
+      197
+    ],
+    "средние": [
+      198,
+      1399
+    ],
+    "частые": [
+      1402,
+      12069
+    ]
+  }
+}
