@@ -4,7 +4,13 @@
 
 **Дата:** май 2026
 
-**Репозиторий:** <https://github.com/EkaterinaGrisha/knowledge-tracing>
+**Репозиторий:** <https://github.com/EkaterinaGrisha/knowledge-tracing-mlops>
+
+> **Примечание.** Этот репозиторий — копия проекта
+> [knowledge-tracing](https://github.com/EkaterinaGrisha/knowledge-tracing),
+> созданная для домашнего задания по подготовке ML-проекта к production.
+> Исходный репозиторий не изменяется; история коммитов перенесена полностью,
+> исходное состояние отмечено тегом `v1.0.0-baseline`.
 
 ---
 
@@ -59,8 +65,9 @@ ML-пайплайн**, в котором этапы подготовки дан�
 
 В качестве основных программных инструментов использованы Python 3.11, NumPy,
 pandas, scikit-learn, PyTorch (CPU-сборка), LightGBM, XGBoost, FLAML, Optuna,
-MLflow, pytest, ruff, Docker и GitHub Actions. Полный список зависимостей с
-ограничениями версий приведён в файле `requirements.txt`.
+MLflow, pytest, ruff, Docker и GitHub Actions. Зависимости управляются через
+Poetry: диапазоны версий объявлены в `pyproject.toml`, точные версии всех
+пакетов зафиксированы в `poetry.lock`.
 
 ---
 
@@ -730,16 +737,23 @@ docker run --rm kt-pipeline:latest --data-source sample --quick
 
 ### 12.1 Разбор Dockerfile
 
+Образ собирается в два этапа (multi-stage build): на этапе `builder`
+зависимости устанавливаются Poetry строго по `poetry.lock`, а в итоговый образ
+`runtime` переносится только готовое виртуальное окружение `.venv` и код —
+без Poetry и кэшей сборки.
+
 | Инструкция | Назначение |
 |---|---|
-| `FROM python:3.11-slim` | компактный официальный базовый образ Python — минимизирует размер итогового образа и поверхность атаки |
-| `ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 MPLBACKEND=Agg` | отключение `.pyc`-файлов; стрим логов без буфера; запрет pip-кэша внутри образа; matplotlib работает без GUI-бэкенда |
-| `WORKDIR /app` | рабочий каталог внутри контейнера |
+| `FROM python:3.11-slim AS builder` | этап сборки зависимостей на компактном официальном образе Python |
+| `pip install "poetry==2.5.1"` | фиксированная версия Poetry — сборка не зависит от выхода новых версий инструмента |
+| `COPY pyproject.toml poetry.lock poetry.toml ./` | в слой зависимостей копируются только файлы-описания окружения, **до** исходников: Docker кэширует слой, и при изменении кода установка не повторяется |
+| `poetry install --only main --no-root` | установка только runtime-зависимостей (без pytest, ruff и т. п.) в `/app/.venv`; на Linux `poetry.lock` указывает CPU-сборку torch из индекса PyTorch — без CUDA-payload (~1 GB) |
+| `FROM python:3.11-slim AS runtime` | итоговый образ: тот же базовый образ, поэтому `.venv` из этапа сборки работает без изменений |
+| `ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 MPLBACKEND=Agg PATH=/app/.venv/bin:$PATH` | отключение `.pyc`-файлов; стрим логов без буфера; matplotlib без GUI-бэкенда; интерпретатор берётся из виртуального окружения |
 | `apt-get install libgomp1 && rm -rf /var/lib/apt/lists/*` | установка системной библиотеки OpenMP, требуемой LightGBM; список пакетов apt сразу очищается для уменьшения размера слоя |
-| `pip install torch --index-url https://download.pytorch.org/whl/cpu` | установка CPU-сборки PyTorch (без CUDA-payload, что экономит ~1 GB размера) |
-| `COPY requirements.txt . && pip install -r requirements.txt` | зависимости копируются и устанавливаются **до** копирования исходников, что позволяет Docker кэшировать слой зависимостей: при изменении только кода `pip install` не выполняется повторно |
-| `COPY . .` | копирование кода и закоммиченного sample-датасета |
-| `useradd --create-home --uid 1000 mluser && chown -R mluser:mluser /app && USER mluser` | создание непривилегированного пользователя и переход к нему — пайплайн внутри контейнера не работает под root, что снижает риск при компрометации |
+| `useradd --create-home --uid 1000 mluser` + `USER mluser` | непривилегированный пользователь — пайплайн внутри контейнера не работает под root, что снижает риск при компрометации; `.venv` принадлежит root и доступна пользователю только на чтение |
+| `COPY --from=builder /app/.venv /app/.venv` | перенос готового окружения из этапа сборки |
+| `COPY --chown=mluser:mluser . .` | копирование кода и закоммиченного sample-датасета |
 | `ENTRYPOINT ["python", "-m", "src.pipeline"] CMD ["--data-source", "sample"]` | команда по умолчанию запускает пайплайн на закоммиченном sample (полностью офлайн); аргументы CMD можно переопределить при запуске |
 
 ### 12.2 Функции контейнеризации в проекте
@@ -748,8 +762,8 @@ docker run --rm kt-pipeline:latest --data-source sample --quick
 
 **Безопасность.** Используется non-root пользователь (`USER mluser`),
 минимальный базовый образ `python:3.11-slim` (только то, что нужно для
-исполнения Python), фиксированные версии зависимостей в `requirements.txt` с
-верхней границей для torch (`torch>=2.0,<2.7`) для защиты от breaking-changes.
+исполнения Python), точные версии всех зависимостей из `poetry.lock` (torch
+ограничен линейкой 2.6.x для защиты от breaking-changes).
 Контейнер не открывает портов; MLflow UI поднимается отдельным сервисом
 docker-compose с явно проброшенным портом 5000.
 
@@ -812,12 +826,16 @@ Workflow срабатывает на каждый push в любую ветку 
 **Job `lint-and-test`** (выполняется на `ubuntu-latest`):
 
 1. Checkout репозитория.
-2. Установка Python 3.11 с кэшированием pip-зависимостей по хешу
-   `requirements.txt`.
-3. Установка зависимостей: CPU-сборка torch с явным indexом, остальные
-   пакеты из `requirements.txt`, плюс `ruff`.
-4. Проверка стиля: `ruff check src tests`.
-5. Запуск тестов: `pytest -q` (полный набор включая slow).
+2. Установка Python из файла `.python-version` (3.11) и Poetry фиксированной
+   версии.
+3. Восстановление виртуального окружения `.venv` из кэша по хешу
+   `poetry.lock`.
+4. Проверка согласованности `poetry.lock` и `pyproject.toml`:
+   `poetry check --lock`.
+5. Установка зависимостей строго по lock-файлу: `poetry install` (на Linux —
+   CPU-сборка torch из индекса PyTorch).
+6. Проверка стиля: `poetry run ruff check src tests`.
+7. Запуск тестов: `poetry run pytest -q` (полный набор включая slow).
 
 **Job `docker-smoke`** (зависит от успешного завершения `lint-and-test`):
 
@@ -904,10 +922,12 @@ ml-pipeline-knowledge-tracing/
 ├── Dockerfile                      # описание контейнерного образа
 ├── docker-compose.yml              # два сервиса: pipeline + mlflow UI
 ├── .dockerignore                   # исключения для контекста сборки Docker
-├── requirements.txt                # Python-зависимости с верхними границами
-├── pyproject.toml                  # настройки pytest и ruff
-├── pytest.ini                      # конфигурация pytest
+├── pyproject.toml                  # зависимости (Poetry) + настройки pytest и ruff
+├── poetry.lock                     # точные версии всех пакетов
+├── poetry.toml                     # .venv создаётся внутри проекта
+├── .python-version                 # версия Python (3.11)
 ├── Makefile                        # удобные команды (install, all, test, lint, docker, ...)
+├── .vscode/                        # интерпретатор из .venv, pytest в VS Code
 ├── .gitignore
 ├── .github/
 │   └── workflows/
@@ -935,7 +955,6 @@ ml-pipeline-knowledge-tracing/
 │   │   └── feature_importance.png
 │   └── screenshots/                # 14 скриншотов MLflow UI
 ├── scripts/
-│   ├── install_torch_cpu.sh        # переустановка CPU-сборки torch
 │   ├── run_pipeline.sh             # quick-прогон на sample с защитой OpenMP
 │   └── run_pipeline_full.sh        # full-прогон с защитой OpenMP
 ├── src/
@@ -982,38 +1001,45 @@ ml-pipeline-knowledge-tracing/
 
 ### Б.1 Требования к окружению
 
-- Python **3.11** (другие 3.10+ совместимы, но в проекте использовалась 3.11);
-- pip ≥ 23 (для PEP 668 / externally-managed Python — обязательно работать в venv);
+- Python **3.11** (версия зафиксирована в `.python-version`);
+- [Poetry](https://python-poetry.org/) 2.x — `pipx install poetry`;
 - Docker Desktop / Docker Engine (опционально, для контейнерного запуска);
 - около 3 GB свободного места на диске (зависимости + контейнерный образ).
 
 ### Б.2 Локальный запуск (без Docker)
 
+Виртуальное окружение интегрировано в репозиторий через Poetry: в Git
+хранится не сама папка `.venv` (она платформозависима и весит сотни мегабайт),
+а её точное описание — `pyproject.toml` (зависимости и группы), `poetry.lock`
+(точные версии и хеши всех пакетов), `poetry.toml` (окружение создаётся в
+`.venv/` внутри проекта) и `.python-version`. Команда `poetry install`
+воссоздаёт идентичное окружение на любой машине.
+
 ```bash
-# 1. Создать и активировать виртуальное окружение
-python3.11 -m venv .venv
-source .venv/bin/activate
+# 1. Создать .venv/ в корне проекта и установить зависимости строго по poetry.lock
+#    (runtime + группа dev: pytest, ruff, mypy, pre-commit)
+poetry install
+# или эквивалентно: make install
 
-# 2. Установить зависимости (CPU-сборка torch отдельно)
-pip install --upgrade pip
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-pip install -r requirements.txt
+# 2. Быстрая проверка установки
+poetry run pytest -m "not slow" -q
 
-# 3. Быстрая проверка установки
-pytest -m "not slow" -q
-
-# 4. Прогон пайплайна на sample (быстро, офлайн)
+# 3. Прогон пайплайна на sample (быстро, офлайн)
 bash scripts/run_pipeline.sh
 # или эквивалентно: make all
 
-# 5. Прогон на полном датасете (~20–45 минут на CPU)
+# 4. Прогон на полном датасете (~20–45 минут на CPU)
 bash scripts/run_pipeline_full.sh
 # или эквивалентно: make all-full
 
-# 6. Просмотр результатов в MLflow UI
-mlflow ui --backend-store-uri file:./mlruns --port 5000
+# 5. Просмотр результатов в MLflow UI
+make mlflow
 # открыть http://localhost:5000
 ```
+
+Команды можно запускать и без префикса `poetry run`, если активировать
+окружение: `source .venv/bin/activate`. VS Code подхватывает интерпретатор
+`.venv/bin/python` автоматически (настройка в `.vscode/settings.json`).
 
 ### Б.3 Запуск в Docker
 
@@ -1038,13 +1064,13 @@ docker compose up mlflow
 ### Б.4 Прогон через ноутбук
 
 Файл `notebooks/train.ipynb` содержит тот же пайплайн, разбитый по ячейкам с
-пояснениями. Для запуска необходимо открыть его в Jupyter / VS Code и выбрать
-kernel, соответствующий созданному venv. Если kernel не зарегистрирован,
-выполнить:
+пояснениями. Для запуска нужен `ipykernel` из необязательной группы
+`notebook`; после установки в VS Code достаточно выбрать kernel `.venv`:
 
 ```bash
-pip install ipykernel
-python -m ipykernel install --user --name kt-venv \
+poetry install --with notebook
+# для Jupyter вне VS Code — зарегистрировать kernel:
+poetry run python -m ipykernel install --user --name kt-venv \
     --display-name "Python 3.11 (kt-pipeline)"
 ```
 
