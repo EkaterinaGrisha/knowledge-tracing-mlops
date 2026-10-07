@@ -85,9 +85,9 @@ def promote(
 ) -> str:
     """Point the ``target`` alias at the version currently under ``source``.
 
-    This is the deployment step of the approval workflow: it runs after the
-    review of the pull request and the Model Card. Unless ``force`` is set, a
-    candidate with a lower test AUC than the current ``target`` is rejected.
+    This is the deployment step of the retraining process (Model_retrain_BPMN.md):
+    it runs after the model owner has approved the new version. Unless ``force``
+    is set, a candidate with a lower test AUC than the current ``target`` is rejected.
 
     Returns:
         The promoted version.

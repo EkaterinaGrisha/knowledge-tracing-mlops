@@ -8,15 +8,23 @@
 
 Репозиторий — копия проекта
 [knowledge-tracing](https://github.com/EkaterinaGrisha/knowledge-tracing),
-в которой выполнено домашнее задание по подготовке ML-проекта к production.
+в которой выполнены домашние задания по подготовке ML-проекта к production.
 
-## Домашнее задание: где что находится
+## Домашние задания: где что находится
 
-- **Model Card** — [MODEL_CARD.md](MODEL_CARD.md).
-- **BPMN-процесс жизненного цикла модели и workflow согласования** —
-  [docs/model_lifecycle.md](docs/model_lifecycle.md), диаграмма в
-  [docs/bpmn/](docs/bpmn).
-- **Тесты hh.ru** — [docs/hh_tests/hh_tests.png](docs/hh_tests/hh_tests.png).
+**Описание модели и её роли в проекте**
+
+- [model_card.md](model_card.md) — Model Card по шаблону Google;
+- [Model_BPMN.md](Model_BPMN.md) — место модели в процессе обучения (BPMN).
+
+**Процесс автоматического переобучения модели**
+
+- [Model_retrain_BPMN.md](Model_retrain_BPMN.md) — схема и этапы
+  переобучения (BPMN).
+
+**Подготовка ML-проекта к production**
+
+- **Тесты hh.ru** — [docs/hh_tests/](docs/hh_tests).
 - **Рефакторинг под production-стандарты.** Код из `src/` перенесён в
   устанавливаемый пакет [src/knowledge_tracing](src/knowledge_tracing) с
   командой `kt` (`etl`, `train`, `predict`, `promote`) вместо shell-скриптов.
@@ -626,7 +634,8 @@ Registry. Файловое хранилище `./mlruns` в MLflow 3 перев�
    `kt-dkt` с алиасом `challenger`; иначе регистрация не выполняется.
    Smoke-прогоны (`kt train --quick`) модель сохраняют, но не регистрируют:
    сокращённые бюджеты не дают кандидата в рабочие версии.
-4. **Продвижение** в рабочую версию — отдельный шаг после согласования:
+4. **Продвижение** в рабочую версию — отдельный шаг после согласования
+   владельцем модели ([Model_retrain_BPMN.md](Model_retrain_BPMN.md)):
    `kt promote` переносит алиас `champion` на текущего `challenger` и
    отказывает (код выхода 4), если его тестовый AUC ниже, чем у действующего
    `champion`.
@@ -654,7 +663,7 @@ ASSISTments 2009 (3 862 студента, 215 673 взаимодействия, 
 знака; DKT+Optuna — тот же AUC при немного иной найденной конфигурации; AutoML
 отличается в пределах, ожидаемых при бюджете по времени. Оценка лучшей модели
 по подгруппам (длина истории студента, частота навыка) — в
-[MODEL_CARD.md](MODEL_CARD.md).
+[model_card.md](model_card.md).
 
 ### 9.1 Сводная таблица метрик качества
 
@@ -1069,7 +1078,9 @@ Workflow срабатывает на каждый push в любую ветку 
 ```
 knowledge-tracing-mlops/
 ├── README.md                       # настоящий отчёт
-├── MODEL_CARD.md                   # карточка модели kt-dkt (DKT+Optuna)
+├── model_card.md                   # Model Card модели kt-dkt (шаблон Google)
+├── Model_BPMN.md                   # место модели в процессе обучения (BPMN)
+├── Model_retrain_BPMN.md           # автоматическое переобучение модели (BPMN)
 ├── pyproject.toml                  # пакет и зависимости (Poetry), настройки pytest, coverage, ruff, mypy
 ├── poetry.lock                     # точные версии всех пакетов
 ├── poetry.toml                     # .venv создаётся внутри проекта
@@ -1091,9 +1102,8 @@ knowledge-tracing-mlops/
 ├── examples/history.csv            # пример истории студентов для kt predict
 ├── notebooks/train.ipynb           # пошаговый прогон пайплайна (без выводов ячеек)
 ├── docs/
-│   ├── model_lifecycle.md          # BPMN-процесс жизненного цикла и согласования
-│   ├── bpmn/                       # model_lifecycle.bpmn (BPMN 2.0) и его изображение PNG
-│   ├── hh_tests/                   # скриншот тестов hh.ru
+│   ├── bpmn/                       # исходники BPMN-схем (.bpmn) и их изображения PNG
+│   ├── hh_tests/                   # результаты тестов hh.ru
 │   └── baseline/                   # эталонные метрики для регрессионной проверки
 ├── reports/                        # опубликованные результаты (make publish-report)
 │   ├── metrics.json
