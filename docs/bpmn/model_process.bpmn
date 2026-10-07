@@ -1,0 +1,262 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_process" targetNamespace="https://github.com/EkaterinaGrisha/knowledge-tracing-mlops">
+  <bpmn:collaboration id="Collaboration_process">
+    <bpmn:participant id="Participant_process" name="Адаптивная обучающая платформа по математике" processRef="Process_process" />
+  </bpmn:collaboration>
+  <bpmn:process id="Process_process" name="Место модели kt-dkt в процессе обучения" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_process">
+      <bpmn:lane id="Lane_student" name="Ученик">
+        <bpmn:flowNodeRef>SE_start</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_solve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_done</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_platform" name="Обучающая платформа">
+        <bpmn:flowNodeRef>T_give</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_save</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_select</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_end</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_model" name="Модель kt-dkt (kt predict)">
+        <bpmn:flowNodeRef>T_predict</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_teacher" name="Учитель">
+        <bpmn:flowNodeRef>SE_teacher</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_dashboard</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_plan</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_teacher</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="SE_start" name="Ученик начал занятие">
+      <bpmn:outgoing>F_start</bpmn:outgoing>
+    </bpmn:startEvent>
+    <bpmn:serviceTask id="T_give" name="Выдать задание">
+      <bpmn:incoming>F_start</bpmn:incoming>
+      <bpmn:incoming>F_next</bpmn:incoming>
+      <bpmn:outgoing>F_give</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="T_solve" name="Решить задание">
+      <bpmn:incoming>F_give</bpmn:incoming>
+      <bpmn:outgoing>F_solve</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:serviceTask id="T_save" name="Сохранить ответ в истории">
+      <bpmn:incoming>F_solve</bpmn:incoming>
+      <bpmn:outgoing>F_save</bpmn:outgoing>
+      <bpmn:dataOutputAssociation id="A_save">
+        <bpmn:targetRef>DS_history</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:serviceTask>
+    <bpmn:dataStoreReference id="DS_history" name="История ответов" />
+    <bpmn:serviceTask id="T_predict" name="Оценить P(correct) по навыкам">
+      <bpmn:incoming>F_save</bpmn:incoming>
+      <bpmn:outgoing>F_predict</bpmn:outgoing>
+      <bpmn:property id="T_predict_input" name="__targetRef_placeholder" />
+      <bpmn:dataInputAssociation id="A_history">
+        <bpmn:sourceRef>DS_history</bpmn:sourceRef>
+        <bpmn:targetRef>T_predict_input</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+      <bpmn:dataOutputAssociation id="A_pred">
+        <bpmn:targetRef>DS_pred</bpmn:targetRef>
+      </bpmn:dataOutputAssociation>
+    </bpmn:serviceTask>
+    <bpmn:dataStoreReference id="DS_pred" name="Прогнозы P(correct)" />
+    <bpmn:serviceTask id="T_select" name="Выбрать следующее задание по прогнозу">
+      <bpmn:incoming>F_predict</bpmn:incoming>
+      <bpmn:outgoing>F_select</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_end" name="Занятие окончено?">
+      <bpmn:incoming>F_select</bpmn:incoming>
+      <bpmn:outgoing>F_done</bpmn:outgoing>
+      <bpmn:outgoing>F_next</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_done" name="Занятие завершено">
+      <bpmn:incoming>F_done</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:startEvent id="SE_teacher" name="Перед уроком">
+      <bpmn:outgoing>F_teacher</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="SE_teacher_def" />
+    </bpmn:startEvent>
+    <bpmn:userTask id="T_dashboard" name="Посмотреть освоение навыков классом">
+      <bpmn:incoming>F_teacher</bpmn:incoming>
+      <bpmn:outgoing>F_dashboard</bpmn:outgoing>
+      <bpmn:property id="T_dashboard_input" name="__targetRef_placeholder" />
+      <bpmn:dataInputAssociation id="A_dashboard">
+        <bpmn:sourceRef>DS_pred</bpmn:sourceRef>
+        <bpmn:targetRef>T_dashboard_input</bpmn:targetRef>
+      </bpmn:dataInputAssociation>
+    </bpmn:userTask>
+    <bpmn:userTask id="T_plan" name="Скорректировать план урока">
+      <bpmn:incoming>F_dashboard</bpmn:incoming>
+      <bpmn:outgoing>F_plan</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:endEvent id="End_teacher" name="План урока готов">
+      <bpmn:incoming>F_plan</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_start" sourceRef="SE_start" targetRef="T_give" />
+    <bpmn:sequenceFlow id="F_give" sourceRef="T_give" targetRef="T_solve" />
+    <bpmn:sequenceFlow id="F_solve" sourceRef="T_solve" targetRef="T_save" />
+    <bpmn:sequenceFlow id="F_save" sourceRef="T_save" targetRef="T_predict" />
+    <bpmn:sequenceFlow id="F_predict" sourceRef="T_predict" targetRef="T_select" />
+    <bpmn:sequenceFlow id="F_select" sourceRef="T_select" targetRef="GW_end" />
+    <bpmn:sequenceFlow id="F_done" name="да" sourceRef="GW_end" targetRef="End_done" />
+    <bpmn:sequenceFlow id="F_next" name="нет" sourceRef="GW_end" targetRef="T_give" />
+    <bpmn:sequenceFlow id="F_teacher" sourceRef="SE_teacher" targetRef="T_dashboard" />
+    <bpmn:sequenceFlow id="F_dashboard" sourceRef="T_dashboard" targetRef="T_plan" />
+    <bpmn:sequenceFlow id="F_plan" sourceRef="T_plan" targetRef="End_teacher" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_process">
+    <bpmndi:BPMNPlane id="BPMNPlane_process" bpmnElement="Collaboration_process">
+      <bpmndi:BPMNShape id="Participant_process_di" bpmnElement="Participant_process" isHorizontal="true">
+        <dc:Bounds x="100" y="40" width="1375" height="650" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_student_di" bpmnElement="Lane_student" isHorizontal="true">
+        <dc:Bounds x="130" y="40" width="1345" height="150" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_platform_di" bpmnElement="Lane_platform" isHorizontal="true">
+        <dc:Bounds x="130" y="190" width="1345" height="160" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_model_di" bpmnElement="Lane_model" isHorizontal="true">
+        <dc:Bounds x="130" y="350" width="1345" height="190" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_teacher_di" bpmnElement="Lane_teacher" isHorizontal="true">
+        <dc:Bounds x="130" y="540" width="1345" height="150" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SE_start_di" bpmnElement="SE_start">
+        <dc:Bounds x="212" y="97" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="185" y="137" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_give_di" bpmnElement="T_give">
+        <dc:Bounds x="335" y="230" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_solve_di" bpmnElement="T_solve">
+        <dc:Bounds x="500" y="75" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_save_di" bpmnElement="T_save">
+        <dc:Bounds x="665" y="230" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DS_history_di" bpmnElement="DS_history">
+        <dc:Bounds x="700" y="420" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="680" y="474" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_predict_di" bpmnElement="T_predict">
+        <dc:Bounds x="830" y="405" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="DS_pred_di" bpmnElement="DS_pred">
+        <dc:Bounds x="1030" y="465" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1086" y="476" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_select_di" bpmnElement="T_select">
+        <dc:Bounds x="995" y="230" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_end_di" bpmnElement="GW_end" isMarkerVisible="true">
+        <dc:Bounds x="1195" y="245" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1175" y="299" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_done_di" bpmnElement="End_done">
+        <dc:Bounds x="1367" y="97" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1340" y="65" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SE_teacher_di" bpmnElement="SE_teacher">
+        <dc:Bounds x="872" y="597" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="845" y="637" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_dashboard_di" bpmnElement="T_dashboard">
+        <dc:Bounds x="995" y="575" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_plan_di" bpmnElement="T_plan">
+        <dc:Bounds x="1160" y="575" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_teacher_di" bpmnElement="End_teacher">
+        <dc:Bounds x="1367" y="597" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1340" y="637" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="F_start_di" bpmnElement="F_start">
+        <di:waypoint x="248" y="115" />
+        <di:waypoint x="395" y="115" />
+        <di:waypoint x="395" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_give_di" bpmnElement="F_give">
+        <di:waypoint x="455" y="270" />
+        <di:waypoint x="560" y="270" />
+        <di:waypoint x="560" y="155" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_solve_di" bpmnElement="F_solve">
+        <di:waypoint x="620" y="115" />
+        <di:waypoint x="725" y="115" />
+        <di:waypoint x="725" y="230" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_save_di" bpmnElement="F_save">
+        <di:waypoint x="785" y="270" />
+        <di:waypoint x="890" y="270" />
+        <di:waypoint x="890" y="405" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_predict_di" bpmnElement="F_predict">
+        <di:waypoint x="950" y="445" />
+        <di:waypoint x="1055" y="445" />
+        <di:waypoint x="1055" y="310" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_select_di" bpmnElement="F_select">
+        <di:waypoint x="1115" y="270" />
+        <di:waypoint x="1195" y="270" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_done_di" bpmnElement="F_done">
+        <di:waypoint x="1245" y="270" />
+        <di:waypoint x="1385" y="270" />
+        <di:waypoint x="1385" y="133" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1257" y="252" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_next_di" bpmnElement="F_next">
+        <di:waypoint x="1220" y="245" />
+        <di:waypoint x="1220" y="54" />
+        <di:waypoint x="430" y="54" />
+        <di:waypoint x="430" y="230" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1226" y="223" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_teacher_di" bpmnElement="F_teacher">
+        <di:waypoint x="908" y="615" />
+        <di:waypoint x="995" y="615" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_dashboard_di" bpmnElement="F_dashboard">
+        <di:waypoint x="1115" y="615" />
+        <di:waypoint x="1160" y="615" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_plan_di" bpmnElement="F_plan">
+        <di:waypoint x="1280" y="615" />
+        <di:waypoint x="1367" y="615" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="A_save_di" bpmnElement="A_save">
+        <di:waypoint x="725" y="310" />
+        <di:waypoint x="725" y="420" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="A_history_di" bpmnElement="A_history">
+        <di:waypoint x="750" y="445" />
+        <di:waypoint x="830" y="445" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="A_pred_di" bpmnElement="A_pred">
+        <di:waypoint x="950" y="475" />
+        <di:waypoint x="1030" y="475" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="A_dashboard_di" bpmnElement="A_dashboard">
+        <di:waypoint x="1055" y="515" />
+        <di:waypoint x="1055" y="575" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>

@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:dc="http://www.omg.org/spec/DD/20100524/DC" xmlns:di="http://www.omg.org/spec/DD/20100524/DI" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" id="Definitions_retrain" targetNamespace="https://github.com/EkaterinaGrisha/knowledge-tracing-mlops">
+  <bpmn:collaboration id="Collaboration_retrain">
+    <bpmn:participant id="Participant_retrain" name="Автоматическое переобучение модели kt-dkt" processRef="Process_retrain" />
+  </bpmn:collaboration>
+  <bpmn:process id="Process_retrain" name="Переобучение и выпуск новой версии модели" isExecutable="false">
+    <bpmn:laneSet id="LaneSet_retrain">
+      <bpmn:lane id="Lane_trigger" name="Планировщик и мониторинг">
+        <bpmn:flowNodeRef>SE_timer</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>SE_drift</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_merge</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_pipeline" name="Пайплайн kt train (автоматически)">
+        <bpmn:flowNodeRef>T_data</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_dq</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_dq</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_train</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_eval</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_auc</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_auc</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_register</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_owner" name="Владелец модели">
+        <bpmn:flowNodeRef>T_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>GW_approve</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_rejected</bpmn:flowNodeRef>
+      </bpmn:lane>
+      <bpmn:lane id="Lane_ops" name="Эксплуатация">
+        <bpmn:flowNodeRef>GW_champion</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>T_deploy</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_ok</bpmn:flowNodeRef>
+        <bpmn:flowNodeRef>End_kept</bpmn:flowNodeRef>
+      </bpmn:lane>
+    </bpmn:laneSet>
+    <bpmn:startEvent id="SE_timer" name="Раз в квартал">
+      <bpmn:outgoing>F_timer</bpmn:outgoing>
+      <bpmn:timerEventDefinition id="SE_timer_def" />
+    </bpmn:startEvent>
+    <bpmn:startEvent id="SE_drift" name="Дрейф данных или падение AUC">
+      <bpmn:outgoing>F_drift</bpmn:outgoing>
+      <bpmn:conditionalEventDefinition id="SE_drift_def">
+        <bpmn:condition xsi:type="bpmn:tFormalExpression" />
+      </bpmn:conditionalEventDefinition>
+    </bpmn:startEvent>
+    <bpmn:exclusiveGateway id="GW_merge" name="">
+      <bpmn:incoming>F_timer</bpmn:incoming>
+      <bpmn:incoming>F_drift</bpmn:incoming>
+      <bpmn:outgoing>F_start</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="T_data" name="Получить и подготовить данные">
+      <bpmn:incoming>F_start</bpmn:incoming>
+      <bpmn:outgoing>F_data</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_dq" name="Данные прошли проверки?">
+      <bpmn:incoming>F_data</bpmn:incoming>
+      <bpmn:outgoing>F_dq_yes</bpmn:outgoing>
+      <bpmn:outgoing>F_dq_no</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_dq" name="Ошибка данных">
+      <bpmn:incoming>F_dq_no</bpmn:incoming>
+      <bpmn:messageEventDefinition id="End_dq_def" />
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="T_train" name="Обучить новую версию">
+      <bpmn:incoming>F_dq_yes</bpmn:incoming>
+      <bpmn:outgoing>F_train</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:serviceTask id="T_eval" name="Оценить качество на тесте">
+      <bpmn:incoming>F_train</bpmn:incoming>
+      <bpmn:outgoing>F_eval</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:exclusiveGateway id="GW_auc" name="AUC ≥ 0,75?">
+      <bpmn:incoming>F_eval</bpmn:incoming>
+      <bpmn:outgoing>F_auc_yes</bpmn:outgoing>
+      <bpmn:outgoing>F_auc_no</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_auc" name="Не прошла порог качества">
+      <bpmn:incoming>F_auc_no</bpmn:incoming>
+      <bpmn:messageEventDefinition id="End_auc_def" />
+    </bpmn:endEvent>
+    <bpmn:serviceTask id="T_register" name="Зарегистрировать в MLflow">
+      <bpmn:incoming>F_auc_yes</bpmn:incoming>
+      <bpmn:outgoing>F_register</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:userTask id="T_approve" name="Проверить метрики и model card">
+      <bpmn:incoming>F_register</bpmn:incoming>
+      <bpmn:outgoing>F_approve</bpmn:outgoing>
+    </bpmn:userTask>
+    <bpmn:exclusiveGateway id="GW_approve" name="Выпуск согласован?">
+      <bpmn:incoming>F_approve</bpmn:incoming>
+      <bpmn:outgoing>F_approve_yes</bpmn:outgoing>
+      <bpmn:outgoing>F_approve_no</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:endEvent id="End_rejected" name="Выпуск отклонён">
+      <bpmn:incoming>F_approve_no</bpmn:incoming>
+      <bpmn:messageEventDefinition id="End_rejected_def" />
+    </bpmn:endEvent>
+    <bpmn:exclusiveGateway id="GW_champion" name="Не хуже текущей версии?">
+      <bpmn:incoming>F_approve_yes</bpmn:incoming>
+      <bpmn:outgoing>F_champion_yes</bpmn:outgoing>
+      <bpmn:outgoing>F_champion_no</bpmn:outgoing>
+    </bpmn:exclusiveGateway>
+    <bpmn:serviceTask id="T_deploy" name="Деплой: kt promote">
+      <bpmn:incoming>F_champion_yes</bpmn:incoming>
+      <bpmn:outgoing>F_deploy</bpmn:outgoing>
+    </bpmn:serviceTask>
+    <bpmn:endEvent id="End_ok" name="Новая версия в эксплуатации">
+      <bpmn:incoming>F_deploy</bpmn:incoming>
+    </bpmn:endEvent>
+    <bpmn:endEvent id="End_kept" name="Работает прежняя версия">
+      <bpmn:incoming>F_champion_no</bpmn:incoming>
+      <bpmn:messageEventDefinition id="End_kept_def" />
+    </bpmn:endEvent>
+    <bpmn:sequenceFlow id="F_timer" sourceRef="SE_timer" targetRef="GW_merge" />
+    <bpmn:sequenceFlow id="F_drift" sourceRef="SE_drift" targetRef="GW_merge" />
+    <bpmn:sequenceFlow id="F_start" sourceRef="GW_merge" targetRef="T_data" />
+    <bpmn:sequenceFlow id="F_data" sourceRef="T_data" targetRef="GW_dq" />
+    <bpmn:sequenceFlow id="F_dq_yes" name="да" sourceRef="GW_dq" targetRef="T_train" />
+    <bpmn:sequenceFlow id="F_dq_no" name="нет" sourceRef="GW_dq" targetRef="End_dq" />
+    <bpmn:sequenceFlow id="F_train" sourceRef="T_train" targetRef="T_eval" />
+    <bpmn:sequenceFlow id="F_eval" sourceRef="T_eval" targetRef="GW_auc" />
+    <bpmn:sequenceFlow id="F_auc_yes" name="да" sourceRef="GW_auc" targetRef="T_register" />
+    <bpmn:sequenceFlow id="F_auc_no" name="нет" sourceRef="GW_auc" targetRef="End_auc" />
+    <bpmn:sequenceFlow id="F_register" sourceRef="T_register" targetRef="T_approve" />
+    <bpmn:sequenceFlow id="F_approve" sourceRef="T_approve" targetRef="GW_approve" />
+    <bpmn:sequenceFlow id="F_approve_yes" name="да" sourceRef="GW_approve" targetRef="GW_champion" />
+    <bpmn:sequenceFlow id="F_approve_no" name="нет" sourceRef="GW_approve" targetRef="End_rejected" />
+    <bpmn:sequenceFlow id="F_champion_yes" name="да" sourceRef="GW_champion" targetRef="T_deploy" />
+    <bpmn:sequenceFlow id="F_champion_no" name="нет" sourceRef="GW_champion" targetRef="End_kept" />
+    <bpmn:sequenceFlow id="F_deploy" sourceRef="T_deploy" targetRef="End_ok" />
+  </bpmn:process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_retrain">
+    <bpmndi:BPMNPlane id="BPMNPlane_retrain" bpmnElement="Collaboration_retrain">
+      <bpmndi:BPMNShape id="Participant_retrain_di" bpmnElement="Participant_retrain" isHorizontal="true">
+        <dc:Bounds x="100" y="40" width="1720" height="780" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_trigger_di" bpmnElement="Lane_trigger" isHorizontal="true">
+        <dc:Bounds x="130" y="40" width="1690" height="200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_pipeline_di" bpmnElement="Lane_pipeline" isHorizontal="true">
+        <dc:Bounds x="130" y="240" width="1690" height="210" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_owner_di" bpmnElement="Lane_owner" isHorizontal="true">
+        <dc:Bounds x="130" y="450" width="1690" height="170" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="Lane_ops_di" bpmnElement="Lane_ops" isHorizontal="true">
+        <dc:Bounds x="130" y="620" width="1690" height="200" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SE_timer_di" bpmnElement="SE_timer">
+        <dc:Bounds x="212" y="82" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="185" y="64" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="SE_drift_di" bpmnElement="SE_drift">
+        <dc:Bounds x="212" y="157" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="185" y="197" width="90" height="42" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_merge_di" bpmnElement="GW_merge" isMarkerVisible="true">
+        <dc:Bounds x="355" y="115" width="50" height="50" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_data_di" bpmnElement="T_data">
+        <dc:Bounds x="470" y="305" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_dq_di" bpmnElement="GW_dq" isMarkerVisible="true">
+        <dc:Bounds x="655" y="320" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="635" y="288" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_dq_di" bpmnElement="End_dq">
+        <dc:Bounds x="662" y="397" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="704" y="408" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_train_di" bpmnElement="T_train">
+        <dc:Bounds x="770" y="305" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_eval_di" bpmnElement="T_eval">
+        <dc:Bounds x="920" y="305" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_auc_di" bpmnElement="GW_auc" isMarkerVisible="true">
+        <dc:Bounds x="1105" y="320" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1085" y="302" width="90" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_auc_di" bpmnElement="End_auc">
+        <dc:Bounds x="1112" y="397" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1154" y="401" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_register_di" bpmnElement="T_register">
+        <dc:Bounds x="1220" y="305" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_approve_di" bpmnElement="T_approve">
+        <dc:Bounds x="1220" y="495" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_approve_di" bpmnElement="GW_approve" isMarkerVisible="true">
+        <dc:Bounds x="1405" y="510" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1385" y="478" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_rejected_di" bpmnElement="End_rejected">
+        <dc:Bounds x="1562" y="517" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1535" y="557" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="GW_champion_di" bpmnElement="GW_champion" isMarkerVisible="true">
+        <dc:Bounds x="1405" y="665" width="50" height="50" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1309" y="676" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="T_deploy_di" bpmnElement="T_deploy">
+        <dc:Bounds x="1520" y="650" width="120" height="80" />
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_ok_di" bpmnElement="End_ok">
+        <dc:Bounds x="1712" y="672" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1685" y="712" width="90" height="42" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape id="End_kept_di" bpmnElement="End_kept">
+        <dc:Bounds x="1412" y="757" width="36" height="36" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1454" y="761" width="90" height="28" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge id="F_timer_di" bpmnElement="F_timer">
+        <di:waypoint x="248" y="100" />
+        <di:waypoint x="380" y="100" />
+        <di:waypoint x="380" y="115" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_drift_di" bpmnElement="F_drift">
+        <di:waypoint x="248" y="175" />
+        <di:waypoint x="380" y="175" />
+        <di:waypoint x="380" y="165" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_start_di" bpmnElement="F_start">
+        <di:waypoint x="405" y="140" />
+        <di:waypoint x="530" y="140" />
+        <di:waypoint x="530" y="305" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_data_di" bpmnElement="F_data">
+        <di:waypoint x="590" y="345" />
+        <di:waypoint x="655" y="345" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_dq_yes_di" bpmnElement="F_dq_yes">
+        <di:waypoint x="705" y="345" />
+        <di:waypoint x="770" y="345" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="719" y="327" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_dq_no_di" bpmnElement="F_dq_no">
+        <di:waypoint x="680" y="370" />
+        <di:waypoint x="680" y="397" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="686" y="372" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_train_di" bpmnElement="F_train">
+        <di:waypoint x="890" y="345" />
+        <di:waypoint x="920" y="345" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_eval_di" bpmnElement="F_eval">
+        <di:waypoint x="1040" y="345" />
+        <di:waypoint x="1105" y="345" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_auc_yes_di" bpmnElement="F_auc_yes">
+        <di:waypoint x="1155" y="345" />
+        <di:waypoint x="1220" y="345" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1169" y="327" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_auc_no_di" bpmnElement="F_auc_no">
+        <di:waypoint x="1130" y="370" />
+        <di:waypoint x="1130" y="397" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1136" y="372" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_register_di" bpmnElement="F_register">
+        <di:waypoint x="1280" y="385" />
+        <di:waypoint x="1280" y="495" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_approve_di" bpmnElement="F_approve">
+        <di:waypoint x="1340" y="535" />
+        <di:waypoint x="1405" y="535" />
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_approve_yes_di" bpmnElement="F_approve_yes">
+        <di:waypoint x="1430" y="560" />
+        <di:waypoint x="1430" y="665" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1436" y="566" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_approve_no_di" bpmnElement="F_approve_no">
+        <di:waypoint x="1455" y="535" />
+        <di:waypoint x="1562" y="535" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1469" y="517" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_champion_yes_di" bpmnElement="F_champion_yes">
+        <di:waypoint x="1455" y="690" />
+        <di:waypoint x="1520" y="690" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1465" y="672" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_champion_no_di" bpmnElement="F_champion_no">
+        <di:waypoint x="1430" y="715" />
+        <di:waypoint x="1430" y="757" />
+        <bpmndi:BPMNLabel>
+          <dc:Bounds x="1436" y="717" width="24" height="14" />
+        </bpmndi:BPMNLabel>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge id="F_deploy_di" bpmnElement="F_deploy">
+        <di:waypoint x="1640" y="690" />
+        <di:waypoint x="1712" y="690" />
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</bpmn:definitions>
