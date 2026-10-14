@@ -12,9 +12,6 @@
 
 ## Домашние задания: где что находится
 
-Текст выступления для защиты всех трёх заданий —
-[presentation/homework_defense.md](presentation/homework_defense.md).
-
 **Описание модели и её роли в проекте**
 
 - [model_card.md](model_card.md) — Model Card по шаблону Google;
